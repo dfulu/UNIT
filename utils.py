@@ -2,7 +2,7 @@
 Copyright (C) 2018 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
-from torch.utils.serialization import load_lua
+# from torch.utils.serialization import load_lua
 from torch.utils.data import DataLoader
 from networks import Vgg16
 from torch.autograd import Variable
@@ -217,7 +217,14 @@ def get_model_list(dirname, key):
 
 
 def load_vgg16(model_dir):
-    """ Use the model from https://github.com/abhiskk/fast-neural-style/blob/master/neural_style/utils.py """
+    """ 
+    Loading vgg for domain invariant perceptual loss usijg this method does not work in pytorch 1.0.1
+    due to backwards compatability functionality being removed. A fix for this has not been implemented yet
+
+    Use the model from https://github.com/abhiskk/fast-neural-style/blob/master/neural_style/utils.py
+    
+    ORIGINAL CODE
+
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
     if not os.path.exists(os.path.join(model_dir, 'vgg16.weight')):
@@ -231,7 +238,10 @@ def load_vgg16(model_dir):
     vgg = Vgg16()
     vgg.load_state_dict(torch.load(os.path.join(model_dir, 'vgg16.weight')))
     return vgg
-
+    """
+    raise ValueError("""Loading vgg for domain invariant perceptual loss usijg this method does not work in pytorch 1.0.1
+    due to backwards compatability functionality being removed. A fix for this has not been implemented yet.
+    Config must set 'vgg_w' to zero or ignore this parameter entirely.""")
 
 def vgg_preprocess(batch):
     tensortype = type(batch.data)
