@@ -4,7 +4,6 @@ Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses
 """
 from torch.utils.serialization import load_lua
 from torch.utils.data import DataLoader
-from networks import Vgg16
 from torch.autograd import Variable
 from torch.optim import lr_scheduler
 from torchvision import transforms
@@ -31,8 +30,6 @@ import time
 # slerp
 # get_slerp_interp
 # get_model_list
-# load_vgg16
-# vgg_preprocess
 # get_scheduler
 # weights_init
 
@@ -216,36 +213,6 @@ def get_model_list(dirname, key):
     return last_model_name
 
 
-def load_vgg16(model_dir):
-    """ Use the model from https://github.com/abhiskk/fast-neural-style/blob/master/neural_style/utils.py """
-    if not os.path.exists(model_dir):
-        os.mkdir(model_dir)
-    if not os.path.exists(os.path.join(model_dir, 'vgg16.weight')):
-        if not os.path.exists(os.path.join(model_dir, 'vgg16.t7')):
-            os.system('wget https://www.dropbox.com/s/76l3rt4kyi3s8x7/vgg16.t7?dl=1 -O ' + os.path.join(model_dir, 'vgg16.t7'))
-        vgglua = load_lua(os.path.join(model_dir, 'vgg16.t7'))
-        vgg = Vgg16()
-        for (src, dst) in zip(vgglua.parameters()[0], vgg.parameters()):
-            dst.data[:] = src
-        torch.save(vgg.state_dict(), os.path.join(model_dir, 'vgg16.weight'))
-    vgg = Vgg16()
-    vgg.load_state_dict(torch.load(os.path.join(model_dir, 'vgg16.weight')))
-    return vgg
-
-
-def vgg_preprocess(batch):
-    tensortype = type(batch.data)
-    (r, g, b) = torch.chunk(batch, 3, dim = 1)
-    batch = torch.cat((b, g, r), dim = 1) # convert RGB to BGR
-    batch = (batch + 1) * 255 * 0.5 # [-1, 1] -> [0, 255]
-    mean = tensortype(batch.data.size()).cuda()
-    mean[:, 0, :, :] = 103.939
-    mean[:, 1, :, :] = 116.779
-    mean[:, 2, :, :] = 123.680
-    batch = batch.sub(Variable(mean)) # subtract mean
-    return batch
-
-
 def get_scheduler(optimizer, hyperparameters, iterations=-1):
     if 'lr_policy' not in hyperparameters or hyperparameters['lr_policy'] == 'constant':
         scheduler = None # constant scheduler
@@ -290,54 +257,3 @@ class Timer:
 
     def __exit__(self, exc_type, exc_value, exc_tb):
         print(self.msg % (time.time() - self.start_time))
-
-
-def pytorch03_to_pytorch04(state_dict_base):
-    def __conversion_core(state_dict_base):
-        state_dict = state_dict_base.copy()
-        for key, value in state_dict_base.items():
-            if key.endswith(('enc.model.0.norm.running_mean',
-                             'enc.model.0.norm.running_var',
-                             'enc.model.1.norm.running_mean',
-                             'enc.model.1.norm.running_var',
-                             'enc.model.2.norm.running_mean',
-                             'enc.model.2.norm.running_var',
-                             'enc.model.3.model.0.model.1.norm.running_mean',
-                             'enc.model.3.model.0.model.1.norm.running_var',
-                             'enc.model.3.model.0.model.0.norm.running_mean',
-                             'enc.model.3.model.0.model.0.norm.running_var',
-                             'enc.model.3.model.1.model.1.norm.running_mean',
-                             'enc.model.3.model.1.model.1.norm.running_var',
-                             'enc.model.3.model.1.model.0.norm.running_mean',
-                             'enc.model.3.model.1.model.0.norm.running_var',
-                             'enc.model.3.model.2.model.1.norm.running_mean',
-                             'enc.model.3.model.2.model.1.norm.running_var',
-                             'enc.model.3.model.2.model.0.norm.running_mean',
-                             'enc.model.3.model.2.model.0.norm.running_var',
-                             'enc.model.3.model.3.model.1.norm.running_mean',
-                             'enc.model.3.model.3.model.1.norm.running_var',
-                             'enc.model.3.model.3.model.0.norm.running_mean',
-                             'enc.model.3.model.3.model.0.norm.running_var',
-                             'dec.model.0.model.0.model.1.norm.running_mean',
-                             'dec.model.0.model.0.model.1.norm.running_var',
-                             'dec.model.0.model.0.model.0.norm.running_mean',
-                             'dec.model.0.model.0.model.0.norm.running_var',
-                             'dec.model.0.model.1.model.1.norm.running_mean',
-                             'dec.model.0.model.1.model.1.norm.running_var',
-                             'dec.model.0.model.1.model.0.norm.running_mean',
-                             'dec.model.0.model.1.model.0.norm.running_var',
-                             'dec.model.0.model.2.model.1.norm.running_mean',
-                             'dec.model.0.model.2.model.1.norm.running_var',
-                             'dec.model.0.model.2.model.0.norm.running_mean',
-                             'dec.model.0.model.2.model.0.norm.running_var',
-                             'dec.model.0.model.3.model.1.norm.running_mean',
-                             'dec.model.0.model.3.model.1.norm.running_var',
-                             'dec.model.0.model.3.model.0.norm.running_mean',
-                             'dec.model.0.model.3.model.0.norm.running_var',
-                             )):
-                del state_dict[key]
-        return state_dict
-    state_dict = dict()
-    state_dict['a'] = __conversion_core(state_dict_base['a'])
-    state_dict['b'] = __conversion_core(state_dict_base['b'])
-    return state_dict
