@@ -14,10 +14,9 @@ import tensorboardX
 import shutil
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--config', type=str, default='configs/edges2handbags_folder.yaml', help='Path to the config file.')
+parser.add_argument('--config', type=str, default='configs/hadgem3_to_cam5_nat-hist.yaml', help='Path to the config file.')
 parser.add_argument('--output_path', type=str, default='.', help="outputs path")
 parser.add_argument("--resume", action="store_true")
-parser.add_argument('--trainer', type=str, default='MUNIT', help="MUNIT|UNIT")
 opts = parser.parse_args()
 
 cudnn.benchmark = True
@@ -26,15 +25,10 @@ cudnn.benchmark = True
 config = get_config(opts.config)
 max_iter = config['max_iter']
 display_size = config['display_size']
-config['vgg_model_path'] = opts.output_path
 
 # Setup model and data loader
-if opts.trainer == 'MUNIT':
-    trainer = MUNIT_Trainer(config)
-elif opts.trainer == 'UNIT':
-    trainer = UNIT_Trainer(config)
-else:
-    sys.exit("Only support MUNIT|UNIT")
+trainer = UNIT_Trainer(config)
+
 trainer.cuda()
 train_loader_a, train_loader_b, test_loader_a, test_loader_b = get_all_data_loaders(config)
 train_display_images_a = torch.stack([train_loader_a.dataset[i] for i in range(display_size)]).cuda()
