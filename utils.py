@@ -2,20 +2,22 @@
 Copyright (C) 2018 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
-from torch.utils.serialization import load_lua
-from torch.utils.data import DataLoader
-from torch.autograd import Variable
-from torch.optim import lr_scheduler
-from torchvision import transforms
-import data
-import torch
+import xarray as xr
+import numpy as np
+
 import os
 import math
-import torchvision.utils as vutils
 import yaml
-import numpy as np
-import torch.nn.init as init
 import time
+
+import torch
+from torch.utils.data import DataLoader
+from torch.optim import lr_scheduler
+import torch.nn.init as init
+import torchvision.utils as vutils
+
+import data
+
 # Methods
 # get_all_data_loaders      : primary data loader interface (load trainA, testA, trainB, testB)
 # get_data_loader_list      : list-based data loader
@@ -37,32 +39,39 @@ def get_dataset(zarr_path, filter_bounds=True):
     ds = xr.open_zarr(zarr_path, consolidated=True)
     if filter_bounds:
         ds = ds[[v for v in ds.data_vars if not 'bnds' in v]]
-    return data.ModelRunsDataset(ds)
+    return ds
 
 
-def get_all_data_loaders(conf):
+def get_all_data_loaders(conf, downscale_consolidate=False):
 
     # Parameters
     params = {'batch_size': conf['batch_size'],
               'num_workers': conf['num_workers']}
-
-    dataset_a = get_dataset(conf['data_zarr_a'])
-    dataset_b = get_dataset(conf['data_zarr_b'])
     
-    dataset_a_train, dataset_a_test = data.train_test_split(dataset_a, conf['test_size'])
-    dataset_b_train, dataset_b_test = data.train_test_split(dataset_b, conf['test_size'])
+    ds_a = get_dataset(conf['data_zarr_a'])
+    ds_b = get_dataset(conf['data_zarr_b'])
+    
+    # match to the coarsest resolution of the pair
+    if downscale_consolidate:
+        rg_a, rg_b = data.construct_regridders(ds_a, ds_b)
+        # regridders allow lazy evaluation
+        ds_a = ds_a if rg_a is None else rg_a(ds_a)
+        ds_b = ds_b if rg_b is None else rg_b(ds_b)
+    
+    dataset_a_train, dataset_a_test = data.train_test_split(data.ModelRunsDataset(ds_a), conf['test_size'])
+    dataset_b_train, dataset_b_test = data.train_test_split(data.ModelRunsDataset(ds_b), conf['test_size'])
     
     loaders = [torch.utils.data.DataLoader(d, **params) for d in 
                   [dataset_a_train, dataset_a_test, 
                    dataset_b_train, dataset_b_test]
               ]
-    
     return loaders
 
 
-def get_config(config):
-    with open(config, 'r') as stream:
-        return yaml.load(stream)
+def get_config(config_path):
+    with open(config_path, 'r') as stream:
+        config = yaml.load(stream, Loader=yaml.CLoader)
+    return config
 
 
 def eformat(f, prec):

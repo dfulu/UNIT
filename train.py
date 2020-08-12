@@ -2,16 +2,20 @@
 Copyright (C) 2018 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
-from utils import get_all_data_loaders, prepare_sub_folder, write_html, write_loss, get_config, write_2images, Timer
-import argparse
-from torch.autograd import Variable
+
 from trainer import UNIT_Trainer
-import torch.backends.cudnn as cudnn
-import torch
+from utils import get_all_data_loaders, prepare_sub_folder, write_html, write_loss, get_config, write_2images, Timer
+
+import argparse
 import os
 import sys
-import tensorboardX
 import shutil
+
+import torch
+from torch.autograd import Variable
+import torch.backends.cudnn as cudnn
+import tensorboardX
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config', type=str, default='configs/hadgem3_to_cam5_nat-hist.yaml', help='Path to the config file.')
@@ -26,15 +30,24 @@ config = get_config(opts.config)
 max_iter = config['max_iter']
 display_size = config['display_size']
 
-# Setup model and data loader
-trainer = UNIT_Trainer(config)
+# data loaders
+train_loader_a, test_loader_a, train_loader_b, test_loader_b = get_all_data_loaders(config, downscale_consolidate=True)
 
-trainer.cuda()
-train_loader_a, train_loader_b, test_loader_a, test_loader_b = get_all_data_loaders(config)
+# Selection of climate fields to display after a number of updates
 train_display_images_a = torch.stack([train_loader_a.dataset[i] for i in range(display_size)]).cuda()
 train_display_images_b = torch.stack([train_loader_b.dataset[i] for i in range(display_size)]).cuda()
 test_display_images_a = torch.stack([test_loader_a.dataset[i] for i in range(display_size)]).cuda()
 test_display_images_b = torch.stack([test_loader_b.dataset[i] for i in range(display_size)]).cuda()
+
+# Add some extra hyperpaameters with inferred info from data
+hyperparams = config
+hyperparams['input_dim_a'] = train_loader_a.dataset.shape[1]
+hyperparams['input_dim_b'] = train_loader_b.dataset.shape[1]
+
+
+# Setup model and data loader
+trainer = UNIT_Trainer(hyperparams)
+trainer.cuda()
 
 # Setup logger and output folders
 model_name = os.path.splitext(os.path.basename(opts.config))[0]
@@ -43,10 +56,17 @@ output_directory = os.path.join(opts.output_path + "/outputs", model_name)
 checkpoint_directory, image_directory = prepare_sub_folder(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml')) # copy config file to output folder
 
+# All small amount of datetimes have all NaN data
+all_nan_last_two_axis = lambda x: torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1)
+
 # Start training
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
 while True:
     for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
+        # Skip NaN fields
+        if all_nan_last_two_axis(images_a) or all_nan_last_two_axis(images_b):
+            continue
+        
         trainer.update_learning_rate()
         images_a, images_b = images_a.cuda().detach(), images_b.cuda().detach()
 

@@ -1,14 +1,32 @@
 """
-This module just has some simple data loaders to index and select images and their labels if needed.
-
 Copyright (C) 2018 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
-import torch
 import os.path
 from sklearn.model_selection import train_test_split as _array_train_test_split
+import xarray as xr
+import numpy as np
+import xesmf as xe
+import torch
 
+def construct_regridders(ds_a, ds_b):
 
+    ds_out = xr.Dataset({'lat': min([ds_a.lat, ds_b.lat], key=lambda x: len(x)), 
+                         'lon': min([ds_a.lon, ds_b.lon], key=lambda x: len(x))})
+    
+    if not ds_out.equals(ds_a[['lat', 'lon']]):
+        regridder_a = xe.Regridder(ds_a, ds_out, 'bilinear')
+        regridder_a.clean_weight_file()
+    else: 
+        regridder_a = None
+        
+    if not ds_out.equals(ds_b[['lat', 'lon']]):
+        regridder_b = xe.Regridder(ds_b, ds_out, 'bilinear')
+        regridder_b.clean_weight_file()
+    else: 
+        regridder_b = None
+        
+    return regridder_a, regridder_b
 
 class ModelRunsDataset(torch.utils.data.Dataset):
     def __init__(self, ds):
@@ -20,8 +38,8 @@ class ModelRunsDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         index_t = index%len(self.ds.time)
         index_r = index//len(self.ds.time)
-        X = self.ds.isel(time=index_t, run=index_r).to_array().load().values
-        return X
+        X = self.ds.isel(time=index_t, run=index_r).to_array().load() - 273
+        return torch.from_numpy(X.values)
     
     @property
     def shape(self):
@@ -38,7 +56,7 @@ class SplitModelRunsDataset(ModelRunsDataset):
         self.allowed_indices = allowed_indices
         
     def __len__(self):
-        return len(allowed_indices)
+        return len(self.allowed_indices)
     
     def __getitem__(self, index):
         index = self.allowed_indices[index]
