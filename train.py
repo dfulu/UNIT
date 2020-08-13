@@ -34,10 +34,10 @@ display_size = config['display_size']
 train_loader_a, test_loader_a, train_loader_b, test_loader_b = get_all_data_loaders(config, downscale_consolidate=True)
 
 # Selection of climate fields to display after a number of updates
-train_display_images_a = torch.stack([img for _, img in zip(range(display_size), train_loader_a)]).cuda()
-train_display_images_b = torch.stack([img for _, img in zip(range(display_size), train_loader_b)]).cuda()
-test_display_images_a = torch.stack([img for _, img in zip(range(display_size), test_loader_a)]).cuda()
-test_display_images_b = torch.stack([img for _, img in zip(range(display_size), test_loader_b)]).cuda()
+train_display_images_a = torch.cat([img for _, img in zip(range(display_size), train_loader_a)]).cuda()
+train_display_images_b = torch.cat([img for _, img in zip(range(display_size), train_loader_b)]).cuda()
+test_display_images_a  = torch.cat([img for _, img in zip(range(display_size), test_loader_a)]).cuda()
+test_display_images_b  = torch.cat([img for _, img in zip(range(display_size), test_loader_b)]).cuda()
 
 
 # Add some extra hyperpaameters with inferred info from data
