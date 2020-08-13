@@ -15,13 +15,13 @@ def construct_regridders(ds_a, ds_b):
                          'lon': min([ds_a.lon, ds_b.lon], key=lambda x: len(x))})
     
     if not ds_out.equals(ds_a[['lat', 'lon']]):
-        regridder_a = xe.Regridder(ds_a, ds_out, 'bilinear')
+        regridder_a = xe.Regridder(ds_a, ds_out, 'bilinear', periodic=True)
         regridder_a.clean_weight_file()
     else: 
         regridder_a = None
         
     if not ds_out.equals(ds_b[['lat', 'lon']]):
-        regridder_b = xe.Regridder(ds_b, ds_out, 'bilinear')
+        regridder_b = xe.Regridder(ds_b, ds_out, 'bilinear', periodic=True)
         regridder_b.clean_weight_file()
     else: 
         regridder_b = None
