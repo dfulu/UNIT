@@ -38,7 +38,7 @@ class ModelRunsDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         index_t = index%len(self.ds.time)
         index_r = index//len(self.ds.time)
-        X = self.ds.isel(time=index_t, run=index_r).to_array().load() - 273
+        X = self.ds.isel(time=index_t, run=index_r).to_array().load()
         return torch.from_numpy(X.values)
     
     @property

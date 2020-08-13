@@ -39,6 +39,7 @@ def get_dataset(zarr_path, filter_bounds=True):
     ds = xr.open_zarr(zarr_path, consolidated=True)
     if filter_bounds:
         ds = ds[[v for v in ds.data_vars if not 'bnds' in v]]
+    ds = ds.isel(height=0)
     return ds
 
 
@@ -51,12 +52,22 @@ def get_all_data_loaders(conf, downscale_consolidate=False):
     ds_a = get_dataset(conf['data_zarr_a'])
     ds_b = get_dataset(conf['data_zarr_b'])
     
+    # preprocess
+    if conf['preprocess_method']=='zeromean':
+        ds_agg_a = xr.load_dataset(conf['agg_data_a']).isel(height=0)
+        ds_agg_b = xr.load_dataset(conf['agg_data_b']).isel(height=0)
+        ds_a = (ds_a - ds_agg_a.sel(variable='mean'))
+        ds_b = (ds_b - ds_agg_b.sel(variable='mean'))
+    else:
+        ds_a = ds_a - 273
+        ds_b = ds_b - 273
+    
     # match to the coarsest resolution of the pair
     if downscale_consolidate:
         rg_a, rg_b = data.construct_regridders(ds_a, ds_b)
         # regridders allow lazy evaluation
-        ds_a = ds_a if rg_a is None else rg_a(ds_a)
-        ds_b = ds_b if rg_b is None else rg_b(ds_b)
+        ds_a = ds_a if rg_a is None else rg_a(ds_a).astype(np.float32)
+        ds_b = ds_b if rg_b is None else rg_b(ds_b).astype(np.float32)
     
     dataset_a_train, dataset_a_test = data.train_test_split(data.ModelRunsDataset(ds_a), conf['test_size'])
     dataset_b_train, dataset_b_test = data.train_test_split(data.ModelRunsDataset(ds_b), conf['test_size'])

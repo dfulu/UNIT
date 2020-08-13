@@ -2,7 +2,7 @@
 Copyright (C) 2017 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
-from networks import AdaINGen, MsImageDis, VAEGen
+from networks import MsImageDis, VAEGen
 from utils import weights_init, get_model_list, get_scheduler
 from torch.autograd import Variable
 import torch
@@ -102,7 +102,7 @@ class UNIT_Trainer(nn.Module):
                               hyperparameters['recon_x_cyc_w'] * self.loss_gen_cyc_x_a + \
                               hyperparameters['recon_kl_cyc_w'] * self.loss_gen_recon_kl_cyc_aba + \
                               hyperparameters['recon_x_cyc_w'] * self.loss_gen_cyc_x_b + \
-                              hyperparameters['recon_kl_cyc_w'] * self.loss_gen_recon_kl_cyc_bab + \
+                              hyperparameters['recon_kl_cyc_w'] * self.loss_gen_recon_kl_cyc_bab
         self.loss_gen_total.backward()
         self.gen_opt.step()
 
