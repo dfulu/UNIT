@@ -12,11 +12,10 @@ import torch
 
 
 # load post-processing - opposite of preprocessing
-def post_process_constructor(config):
+def post_process_constructor(config, x2x):
     if config['preprocess_method']=='zeromean':
         
-        ab = 'b' if args.a2b else 'a'
-        ds_agg = xr.load_dataset(config[f'agg_data_{ab}']).isel(height=0)
+        ds_agg = xr.load_dataset(config[f'agg_data_{x2x[-1]}']).isel(height=0)
         
         def undo_zeromean(x):
             return x + ds_agg.sel(variable='mean').to_array()
@@ -28,7 +27,7 @@ def post_process_constructor(config):
         return celcius_to_kelvin
     
     
-def network_translate_constructor(config, checkpoint, a2b):
+def network_translate_constructor(config, checkpoint, x2x):
     
     # load model
     state_dict = torch.load(checkpoint)
@@ -37,8 +36,8 @@ def network_translate_constructor(config, checkpoint, a2b):
     trainer.gen_a.load_state_dict(state_dict['a'])
     trainer.gen_b.load_state_dict(state_dict['b'])
     trainer.eval().cuda()
-    encode = trainer.gen_a.encode if a2b else trainer.gen_b.encode # encode function
-    decode = trainer.gen_b.decode if a2b else trainer.gen_a.decode # decode function
+    encode = trainer.gen_a.encode if x2x[0]=='a' else trainer.gen_b.encode # encode function
+    decode = trainer.gen_a.decode if x2x[-1]=='a' else trainer.gen_b.decode # decode function
     
     def network_translate(x):
         x = np.array(x)[np.newaxis, ...]
@@ -51,10 +50,10 @@ def network_translate_constructor(config, checkpoint, a2b):
     
 
 
-def complete_translate_constructor(config, checkpoint, a2b):
+def complete_translate_constructor(config, checkpoint, x2x):
     
-    network_translate = network_translate_constructor(config, checkpoint, a2b)
-    post_process = post_process_constructor(config)
+    network_translate = network_translate_constructor(config, checkpoint, x2x)
+    post_process = post_process_constructor(config, x2x)
     
     def translate(x):
         x = network_translate(x)
@@ -69,11 +68,17 @@ if __name__=='__main__':
     import argparse
     from dask.diagnostics import ProgressBar
     
+    def check_x2x(x2x):
+        x2x = str(x2x)
+        if x2x not in ['a2a', 'a2b', 'b2a', 'b2b']:
+            raise ValueError("Invalid x2x arg")
+        return x2x
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='~/model_outputs/outputs/hadgem3_to_cam5_nat-hist/config.yaml', help='Path to the config file.')
     parser.add_argument('--output_zarr', type=str, help="output zarr store path")
     parser.add_argument('--checkpoint', type=str, help="checkpoint of autoencoders")
-    parser.add_argument('--a2b', type=int, help="1 for a2b and others for b2a", default=1)
+    parser.add_argument('--x2x', type=check_x2x, help="any of [a2a, a2b, b2a, b2b]")
     parser.add_argument('--seed', type=int, default=1, help="random seed")
     args = parser.parse_args()
 
@@ -88,7 +93,7 @@ if __name__=='__main__':
     # By constructing loader and extracting dataset from this we make sure all preprocessing is
     # consistent
     loaders = get_all_data_loaders(config, downscale_consolidate=True)
-    ds = loaders[0].dataset.ds if args.a2b else loaders[2].dataset.ds
+    ds = loaders[0].dataset.ds if args.x2x[0]=='a' else loaders[2].dataset.ds
     da = ds.to_array().transpose('run', 'time', 'variable', 'lat', 'lon')
 
     # append number of variables
@@ -96,7 +101,7 @@ if __name__=='__main__':
     config['input_dim_b'] = loaders[2].dataset.shape[1]
     del loaders
 
-    translate = complete_translate_constructor(config, args.checkpoint, args.a2b)
+    translate = complete_translate_constructor(config, args.checkpoint, args.x2x)
     
     da_translated = xr.apply_ufunc(translate, 
                                     da,
