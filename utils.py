@@ -9,6 +9,7 @@ import os
 import math
 import yaml
 import time
+from functools import reduce
 
 import torch
 from torch.utils.data import DataLoader
@@ -35,11 +36,33 @@ import data
 # get_scheduler
 # weights_init
 
-def get_dataset(zarr_path, filter_bounds=True):
+
+def reduce_height(ds, level_vars):
+    ds_list = [ds.sel(height=h)[v].drop('height') for h,v in level_vars.items()]
+    if len(ds_list)>1:
+        ds = reduce(lambda ds1, ds2: ds1.merge(ds2), ds_list)
+    else:
+        ds = ds_list[0]
+    return ds
+
+
+def get_dataset(zarr_path, level_vars=None, filter_bounds=True):
+    """
+    zarr_path
+    reduce_height: {height: [variables],}
+    """
     ds = xr.open_zarr(zarr_path, consolidated=True)
     if filter_bounds:
         ds = ds[[v for v in ds.data_vars if not 'bnds' in v]]
-    ds = ds.isel(height=0)
+    if level_vars is not None:
+        ds = reduce_height(ds, level_vars)
+    return ds
+
+
+def kelvin_to_celcius(ds):
+    temp_vars = [v for v in ds.data_vars if 'tas' in v]
+    for v in temp_vars:
+        ds[v] = ds[v] - 273
     return ds
 
 
@@ -49,18 +72,21 @@ def get_all_data_loaders(conf, downscale_consolidate=False):
     params = {'batch_size': conf['batch_size'],
               'num_workers': conf['num_workers']}
     
-    ds_a = get_dataset(conf['data_zarr_a'])
-    ds_b = get_dataset(conf['data_zarr_b'])
+    ds_a = get_dataset(conf['data_zarr_a'], conf['level_vars'])
+    ds_b = get_dataset(conf['data_zarr_b'], conf['level_vars'])
     
     # preprocess
-    if conf['preprocess_method']=='zeromean':
-        ds_agg_a = xr.load_dataset(conf['agg_data_a']).isel(height=0)
-        ds_agg_b = xr.load_dataset(conf['agg_data_b']).isel(height=0)
-        ds_a = (ds_a - ds_agg_a.sel(variable='mean'))
-        ds_b = (ds_b - ds_agg_b.sel(variable='mean'))
+    if conf['preprocess_method'] in ['zeromean', 'normalise']:
+        ds_agg_a = reduce_height(xr.load_dataset(conf['agg_data_a']), conf['level_vars'])
+        ds_agg_b = reduce_height(xr.load_dataset(conf['agg_data_b']), conf['level_vars'])
+        ds_a = (ds_a - ds_agg_a.sel(aggregate_statistic='mean'))
+        ds_b = (ds_b - ds_agg_b.sel(aggregate_statistic='mean'))
+        if conf['preprocess_method'] == 'normalise':
+            ds_a = ds_a/ds_agg_a.sel(aggregate_statistic='std')
+            ds_b = ds_b/ds_agg_b.sel(aggregate_statistic='std')
     else:
-        ds_a = ds_a - 273
-        ds_b = ds_b - 273
+        ds_a = kelvin_to_celcius(ds_a)
+        ds_b = kelvin_to_celcius(ds_b)
     
     # match to the coarsest resolution of the pair
     if downscale_consolidate:
