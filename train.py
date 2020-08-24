@@ -44,6 +44,7 @@ test_display_images_b  = torch.cat([img for _, img in zip(range(display_size), t
 hyperparams = config
 hyperparams['input_dim_a'] = train_loader_a.dataset.shape[1]
 hyperparams['input_dim_b'] = train_loader_b.dataset.shape[1]
+print(hyperparams['input_dim_a'])
 
 
 # Setup model and data loader
@@ -58,14 +59,14 @@ checkpoint_directory, image_directory = prepare_sub_folder(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml')) # copy config file to output folder
 
 # All small amount of datetimes have all NaN data
-all_nan_last_two_axis = lambda x: torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1)
+all_nan_last_two_axis_any_channel = lambda x: torch.any(torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1), axis=-1)
 
 # Start training
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
 while True:
     for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
         # Skip NaN fields
-        if all_nan_last_two_axis(images_a) or all_nan_last_two_axis(images_b):
+        if all_nan_last_two_axis_any_channel(images_a) or all_nan_last_two_axis_any_channel(images_b):
             continue
         
         trainer.update_learning_rate()
@@ -87,6 +88,8 @@ while True:
             with torch.no_grad():
                 test_image_outputs = trainer.sample(test_display_images_a, test_display_images_b)
                 train_image_outputs = trainer.sample(train_display_images_a, train_display_images_b)
+                
+            # only pass first 3 channels for image
             write_2images(test_image_outputs, display_size, image_directory, 'test_%08d' % (iterations + 1))
             write_2images(train_image_outputs, display_size, image_directory, 'train_%08d' % (iterations + 1))
             # HTML

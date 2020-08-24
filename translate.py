@@ -5,25 +5,50 @@ Command line tool to translate data using pretrained UNIT network
 import xarray as xr
 import numpy as np
 
-from utils import get_config, get_all_data_loaders
+from utils import get_config, get_all_data_loaders, reduce_height
+from data import construct_regridders
 from trainer import UNIT_Trainer
 
 import torch
 
 
-# load post-processing - opposite of preprocessing
 def post_process_constructor(config, x2x):
-    if config['preprocess_method']=='zeromean':
+    if config['preprocess_method'] in ['zeromean', 'normalise']:
         
-        ds_agg = xr.load_dataset(config[f'agg_data_{x2x[-1]}']).isel(height=0)
+        ds_agg_a = xr.load_dataset(config[f'agg_data_a'])
+        ds_agg_b = xr.load_dataset(config[f'agg_data_b'])
+        rg_a, rg_b = construct_regridders(ds_agg_a, ds_agg_b)
+
+        ds_agg_a = ds_agg_a if rg_a is None else rg_a(ds_agg_a).astype(np.float32)
+        ds_agg_b = ds_agg_b if rg_b is None else rg_b(ds_agg_b).astype(np.float32)
+        
+        ds_agg = ds_agg_a if x2x[-1]=='a' else ds_agg_b
+        
+        ds_agg = reduce_height(ds_agg, config['level_vars'])
         
         def undo_zeromean(x):
-            return x + ds_agg.sel(variable='mean').to_array()
-        return undo_zeromean
+            return x + ds_agg.sel(aggregate_statistic='mean').to_array()
+    
+        def undo_normalise(x):
+            x = x * ds_agg.sel(aggregate_statistic='std').to_array()
+            x = undo_zeromean(x)
+            return x
+        
+        if config['preprocess_method']=='zeromean':
+            return undo_zeromean
+        elif config['preprocess_method']=='normalise':
+            return undo_normalise
     
     else:
         def celcius_to_kelvin(x):
-            return x + 273
+            i = 0
+            for var_list in config['level_vars'].keys():
+                for v in var_list:
+                    if 'tas' in v:
+                        x[i] = x[i] + 273
+                    i+=1
+            return x
+        
         return celcius_to_kelvin
     
     
@@ -45,7 +70,7 @@ def network_translate_constructor(config, checkpoint, x2x):
         x, noise = encode(x)
         x = decode(x)
         x = x.cpu().detach().numpy()
-        return x
+        return x[0]
     return network_translate
     
 
@@ -66,7 +91,7 @@ def complete_translate_constructor(config, checkpoint, x2x):
 if __name__=='__main__':
     
     import argparse
-    from dask.diagnostics import ProgressBar
+    import progressbar
     
     def check_x2x(x2x):
         x2x = str(x2x)
@@ -94,7 +119,7 @@ if __name__=='__main__':
     # consistent
     loaders = get_all_data_loaders(config, downscale_consolidate=True)
     ds = loaders[0].dataset.ds if args.x2x[0]=='a' else loaders[2].dataset.ds
-    da = ds.to_array().transpose('run', 'time', 'variable', 'lat', 'lon')
+    da = ds.to_array().transpose('run', 'time', 'variable', 'lat', 'lon')#.chunk({'variable': -1})
 
     # append number of variables
     config['input_dim_a'] = loaders[0].dataset.shape[1]
@@ -103,13 +128,30 @@ if __name__=='__main__':
 
     translate = complete_translate_constructor(config, args.checkpoint, args.x2x)
     
-    da_translated = xr.apply_ufunc(translate, 
-                                    da,
-                                    vectorize=True,
-                                    dask='parallelized', 
-                                    output_dtypes=['float'],
-                                    input_core_dims=[['variable', 'lat', 'lon']],
-                                    output_core_dims=[['variable', 'lat', 'lon']])
-    
-    with ProgressBar():
-        da_translated.to_dataset(dim='variable').to_zarr(args.output_zarr, consolidated=True, mode='w-')
+    mode = 'w-'
+    append_dim = None
+    consolidated=False
+
+    with progressbar.ProgressBar(max_value=len(da.time)) as bar:
+        
+        for i in range(len(da.time)):
+            
+            if i==len(da.time)-1:
+                consolidated=True
+                
+            da_translated = xr.apply_ufunc(translate, 
+                                        da.isel(time=slice(i, i+1)),
+                                        vectorize=True,
+                                        dask='allowed',
+                                        output_dtypes=['float'],
+                                        input_core_dims=[['variable', 'lat', 'lon']],
+                                        output_core_dims=[['variable', 'lat', 'lon']])
+
+            da_translated.to_dataset(dim='variable').to_zarr(args.output_zarr, 
+                                                             mode=mode, 
+                                                             append_dim=append_dim,
+                                                             consolidated=consolidated)
+            bar.update(i)
+            mode, append_dim='a', 'time'
+
+        

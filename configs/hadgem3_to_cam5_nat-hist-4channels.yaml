@@ -49,14 +49,14 @@ dis:
 num_workers: 5                # number of data loading threads
 data_zarr_a: /datadrive/hadgem3/nat_hist_zarr  # dataset folder location
 data_zarr_b: /datadrive/cam5/nat_hist_zarr     # dataset folder location
-agg_data_a: /datadrive/hadgem3/nat_hist_agg.nc # dataset of preprocessed aggregate stats 
-agg_data_b: /datadrive/cam5/nat_hist_agg.nc    # dataset of preprocessed aggregate stats
-preprocess_method: none       # method of preprocessing [zeromean, normalise, none]
+agg_data_a: /datadrive/hadgem3/nat_hist_agg_temp_coherent.nc # dataset of preprocessed aggregate stats 
+agg_data_b: /datadrive/cam5/nat_hist_agg_temp_coherent.nc    # dataset of preprocessed aggregate stats
+preprocess_method: normalise  # method of preprocessing [zeromean, normalise, none]
 test_size: 0.2                # fraction of data used for test
 level_vars:                   # which levels to take each variable at 
   0:
   - pr
-#  2:
-#  - tas
-#  - tasmin
-#  - tasmax
+  2:
+  - tas
+  - tasmin
+  - tasmax

@@ -1,0 +1,1 @@
+python translate.py --config ~/model_outputs/outputs/hadgem3_to_cam5_nat-hist-4channels/config.yaml --output_zarr /datadrive/cam5/nat_hist_to_hadgem3_4ch_zarr --checkpoint ~/model_outputs/outputs/hadgem3_to_cam5_nat-hist-4channels/checkpoints/gen_00110000.pt --x2x b2a --seed 9725432
