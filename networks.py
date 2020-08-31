@@ -82,6 +82,7 @@ class MsImageDis(nn.Module):
                 assert 0, "Unsupported GAN type: {}".format(self.gan_type)
         return loss
 
+
 ##################################################################################
 # Generator
 ##################################################################################
@@ -95,10 +96,11 @@ class VAEGen(nn.Module):
         n_res = params['n_res']
         activ = params['activ']
         pad_type = params['pad_type']
+        output_activ = params['output_activ']
 
         # content encoder
         self.enc = ContentEncoder(n_downsample, n_res, input_dim, dim, 'in', activ, pad_type=pad_type)
-        self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, input_dim, res_norm='in', activ=activ, pad_type=pad_type)
+        self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, input_dim, res_norm='in', activ=activ, pad_type=pad_type, output_activ=output_activ)
 
     def forward(self, images):
         # This is a reduced VAE implementation where we assume the outputs are multivariate Gaussian distribution with mean = hiddens and std_dev = all ones.
@@ -142,6 +144,7 @@ class StyleEncoder(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+
 class ContentEncoder(nn.Module):
     def __init__(self, n_downsample, n_res, input_dim, dim, norm, activ, pad_type):
         super(ContentEncoder, self).__init__()
@@ -159,8 +162,9 @@ class ContentEncoder(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+
 class Decoder(nn.Module):
-    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='adain', activ='relu', pad_type='zero'):
+    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='adain', activ='relu', pad_type='zero', output_activ='none'):
         super(Decoder, self).__init__()
 
         self.model = []
@@ -171,16 +175,19 @@ class Decoder(nn.Module):
             self.model += [nn.Upsample(scale_factor=2),
                            Conv2dBlock(dim, dim // 2, 5, 1, 2, norm='ln', activation=activ, pad_type=pad_type)]
             dim //= 2
-        # use reflection padding in the last conv layer
-        self.model += [Conv2dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='none', pad_type=pad_type)]
+
+        self.model += [Conv2dBlock(dim, output_dim, 7, 1, 3, norm='none', activation=output_activ, pad_type=pad_type)]
         self.model = nn.Sequential(*self.model)
+
 
     def forward(self, x):
         return self.model(x)
 
+
 ##################################################################################
 # Sequential Models
 ##################################################################################
+
 class ResBlocks(nn.Module):
     def __init__(self, num_blocks, dim, norm='in', activation='relu', pad_type='zero'):
         super(ResBlocks, self).__init__()
@@ -191,6 +198,7 @@ class ResBlocks(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
 
 class MLP(nn.Module):
     def __init__(self, input_dim, output_dim, dim, n_blk, norm='none', activ='relu'):
@@ -206,9 +214,11 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.model(x.view(x.size(0), -1))
 
+
 ##################################################################################
 # Basic Blocks
 ##################################################################################
+
 class ResBlock(nn.Module):
     def __init__(self, dim, norm='in', activation='relu', pad_type='zero'):
         super(ResBlock, self).__init__()
@@ -224,8 +234,9 @@ class ResBlock(nn.Module):
         out += residual
         return out
 
+
 class Conv2dBlock(nn.Module):
-    def __init__(self, input_dim ,output_dim, kernel_size, stride,
+    def __init__(self, input_dim, output_dim, kernel_size, stride,
                  padding=0, norm='none', activation='relu', pad_type='zero'):
         super(Conv2dBlock, self).__init__()
         self.use_bias = True
@@ -255,21 +266,7 @@ class Conv2dBlock(nn.Module):
         else:
             assert 0, "Unsupported normalization: {}".format(norm)
 
-        # initialize activation
-        if activation == 'relu':
-            self.activation = nn.ReLU(inplace=True)
-        elif activation == 'lrelu':
-            self.activation = nn.LeakyReLU(0.2, inplace=True)
-        elif activation == 'prelu':
-            self.activation = nn.PReLU()
-        elif activation == 'selu':
-            self.activation = nn.SELU(inplace=True)
-        elif activation == 'tanh':
-            self.activation = nn.Tanh()
-        elif activation == 'none':
-            self.activation = None
-        else:
-            assert 0, "Unsupported activation: {}".format(activation)
+        self.activation = MultiChannelActivation(activation, output_dim)
 
         # initialize convolution
         self.conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride, bias=self.use_bias)
@@ -281,6 +278,7 @@ class Conv2dBlock(nn.Module):
         if self.activation:
             x = self.activation(x)
         return x
+
 
 class LinearBlock(nn.Module):
     def __init__(self, input_dim, output_dim, norm='none', activation='relu'):
@@ -302,21 +300,8 @@ class LinearBlock(nn.Module):
         else:
             assert 0, "Unsupported normalization: {}".format(norm)
 
-        # initialize activation
-        if activation == 'relu':
-            self.activation = nn.ReLU(inplace=True)
-        elif activation == 'lrelu':
-            self.activation = nn.LeakyReLU(0.2, inplace=True)
-        elif activation == 'prelu':
-            self.activation = nn.PReLU()
-        elif activation == 'selu':
-            self.activation = nn.SELU(inplace=True)
-        elif activation == 'tanh':
-            self.activation = nn.Tanh()
-        elif activation == 'none':
-            self.activation = None
-        else:
-            assert 0, "Unsupported activation: {}".format(activation)
+        self.activation = get_activation(activation)
+
 
     def forward(self, x):
         out = self.fc(x)
@@ -330,6 +315,7 @@ class LinearBlock(nn.Module):
 ##################################################################################
 # Normalization layers
 ##################################################################################
+
 class AdaptiveInstanceNorm2d(nn.Module):
     def __init__(self, num_features, eps=1e-5, momentum=0.1):
         super(AdaptiveInstanceNorm2d, self).__init__()
@@ -391,3 +377,42 @@ class LayerNorm(nn.Module):
             x = x * self.gamma.view(*shape) + self.beta.view(*shape)
         return x
 
+
+class MultiChannelActivation(nn.Module):
+    def __init__(self, activation, output_dim):
+        super(MultiChannelActivation, self).__init__()
+        if isinstance(activation, str):
+            activation = [activation]
+        elif (not isinstance(activation, list)) or len(activation)!=output_dim:
+            raise ValueError(f"Not valid activation {activation} for channels {output_dim}")
+
+        self.activation = [get_activation(a) for a in activation]
+    
+    def forward(self, x):
+        if len(self.activation)==1:
+            if self.activation[0] is not None:
+                return self.activation[0](x)
+            else:
+                return x
+        else:
+            x_list = [self.activation[i](x[:, i:i+1]) if self.activation[i] is not None else x[:, i:i+1] for i in range(x.shape[1])]
+            x = torch.cat(x_list, dim=1)
+            return x
+            
+
+def get_activation(activation):
+        # initialize activation
+    if activation == 'relu':
+        return nn.ReLU(inplace=True)
+    elif activation == 'lrelu':
+        return nn.LeakyReLU(0.2, inplace=True)
+    elif activation == 'prelu':
+        return nn.PReLU()
+    elif activation == 'selu':
+        return nn.SELU(inplace=True)
+    elif activation == 'tanh':
+        return nn.Tanh()
+    elif activation == 'none':
+        return None
+    else:
+        assert 0, "Unsupported activation: {}".format(activation)

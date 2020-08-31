@@ -65,6 +65,11 @@ def kelvin_to_celcius(ds):
         ds[v] = ds[v] - 273
     return ds
 
+def precip_kilograms_to_grams(ds):
+    precip_vars = [v for v in ds.data_vars if v=='pr']
+    for v in precip_vars:
+        ds[v] = ds[v] * 1000
+    return ds
 
 def get_all_data_loaders(conf, downscale_consolidate=False):
 
@@ -86,7 +91,9 @@ def get_all_data_loaders(conf, downscale_consolidate=False):
             ds_b = ds_b/ds_agg_b.sel(aggregate_statistic='std')
     else:
         ds_a = kelvin_to_celcius(ds_a)
+        ds_a = precip_kilograms_to_grams(ds_a)
         ds_b = kelvin_to_celcius(ds_b)
+        ds_b = precip_kilograms_to_grams(ds_b)
     
     # match to the coarsest resolution of the pair
     if downscale_consolidate:

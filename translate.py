@@ -40,16 +40,18 @@ def post_process_constructor(config, x2x):
             return undo_normalise
     
     else:
-        def celcius_to_kelvin(x):
+        def unit_convert(x):
             i = 0
             for var_list in config['level_vars'].keys():
                 for v in var_list:
                     if 'tas' in v:
                         x[i] = x[i] + 273
+                    elif v=='pr':
+                        x[i] = x[i]/1000
                     i+=1
             return x
         
-        return celcius_to_kelvin
+        return unit_convert
     
     
 def network_translate_constructor(config, checkpoint, x2x):
@@ -130,28 +132,31 @@ if __name__=='__main__':
     
     mode = 'w-'
     append_dim = None
-    consolidated=False
+    n_times=100
+    N_times = len(da.time)
 
-    with progressbar.ProgressBar(max_value=len(da.time)) as bar:
+    with progressbar.ProgressBar(max_value=N_times) as bar:
         
-        for i in range(len(da.time)):
-            
-            if i==len(da.time)-1:
-                consolidated=True
+        for i in range(0, N_times+n_times, n_times):
                 
             da_translated = xr.apply_ufunc(translate, 
-                                        da.isel(time=slice(i, i+1)),
+                                        da.isel(
+                                            time=slice(i, min(i+n_times, N_times))
+                                        ),
                                         vectorize=True,
                                         dask='allowed',
                                         output_dtypes=['float'],
                                         input_core_dims=[['variable', 'lat', 'lon']],
-                                        output_core_dims=[['variable', 'lat', 'lon']])
+                                        output_core_dims=[['variable', 'lat', 'lon']]
+            )
+            
+            da_translated = da_translated.chunk(dict(run=1, time=1, lat=-1, lon=-1))
 
-            da_translated.to_dataset(dim='variable').to_zarr(args.output_zarr, 
-                                                             mode=mode, 
-                                                             append_dim=append_dim,
-                                                             consolidated=consolidated)
+            da_translated.to_dataset(dim='variable').to_zarr(
+                args.output_zarr, 
+                mode=mode, 
+                append_dim=append_dim,
+                consolidated=True
+            )
             bar.update(i)
             mode, append_dim='a', 'time'
-
-        

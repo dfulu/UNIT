@@ -1,0 +1,66 @@
+# Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
+
+# logger options
+image_save_iter: 10_000       # How often do you want to save output images during training
+image_display_iter: 100       # How often do you want to display output images during training
+display_size: 16              # How many images do you want to display each time
+snapshot_save_iter: 10_000    # How often do you want to save trained models
+log_iter: 10                  # How often do you want to log the training stats
+
+# optimization options
+max_iter: 1_000_000           # maximum number of training iterations
+batch_size: 1                 # batch size
+weight_decay: 0.0001          # weight decay
+beta1: 0.5                    # Adam parameter
+beta2: 0.999                  # Adam parameter
+init: kaiming                 # initialization [gaussian/kaiming/xavier/orthogonal]
+lr: 0.0001                    # initial learning rate
+lr_policy: step               # learning rate scheduler
+step_size: 100_000            # how often to decay learning rate
+gamma: 0.5                    # how much to decay learning rate
+gan_w: 1                      # weight of adversarial loss
+recon_x_w: 10                 # weight of image reconstruction loss
+recon_h_w: 0                  # weight of hidden reconstruction loss
+recon_kl_w: 0.01              # weight of KL loss for reconstruction
+recon_x_cyc_w: 10             # weight of cycle consistency loss
+recon_kl_cyc_w: 0.01          # weight of KL loss for cycle consistency
+vgg_w: 0                      # weight of domain-invariant perceptual loss
+
+# model options
+gen:
+  dim: 64                     # number of filters in the bottommost layer
+  mlp_dim: 256                # number of filters in MLP
+  style_dim: 8                # length of style code
+  activ: relu                 # activation function [relu/lrelu/prelu/selu/tanh]
+  n_downsample: 2             # number of downsampling layers in content encoder
+  n_res: 4                    # number of residual blocks in content encoder/decoder
+  pad_type: zero              # padding type [zero/reflect]
+  output_activ:               # activation functions for decoder channels can be single option or list
+  - relu                      #    if list the functions are applied in same order as level_vars specified below
+  - none
+  - none
+  - none
+dis:
+  dim: 64                     # number of filters in the bottommost layer
+  norm: none                  # normalization layer [none/bn/in/ln]
+  activ: lrelu                # activation function [relu/lrelu/prelu/selu/tanh]
+  n_layer: 4                  # number of layers in D
+  gan_type: lsgan             # GAN loss [lsgan/nsgan]
+  num_scales: 3               # number of scales
+  pad_type: reflect           # padding type [zero/reflect]
+
+# data options
+num_workers: 5                # number of data loading threads
+data_zarr_a: /datadrive/hadgem3/nat_hist_zarr  # dataset folder location
+data_zarr_b: /datadrive/cam5/nat_hist_zarr     # dataset folder location
+agg_data_a: /datadrive/hadgem3/nat_hist_agg_temp_coherent.nc # dataset of preprocessed aggregate stats 
+agg_data_b: /datadrive/cam5/nat_hist_agg_temp_coherent.nc    # dataset of preprocessed aggregate stats
+preprocess_method: none       # method of preprocessing [zeromean, normalise, none]
+test_size: 0.2                # fraction of data used for test
+level_vars:                   # which levels to take each variable at 
+  0:
+  - pr
+  2:
+  - tas
+  - tasmin
+  - tasmax
