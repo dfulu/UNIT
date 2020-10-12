@@ -42,7 +42,7 @@ def post_process_constructor(config, x2x):
     else:
         def unit_convert(x):
             i = 0
-            for var_list in config['level_vars'].keys():
+            for _, var_list in config['level_vars'].items():
                 for v in var_list:
                     if 'tas' in v:
                         x[i] = x[i] + 273
@@ -137,7 +137,7 @@ if __name__=='__main__':
 
     with progressbar.ProgressBar(max_value=N_times) as bar:
         
-        for i in range(0, N_times+n_times, n_times):
+        for i in range(0, N_times, n_times):
                 
             da_translated = xr.apply_ufunc(translate, 
                                         da.isel(
@@ -160,3 +160,4 @@ if __name__=='__main__':
             )
             bar.update(i)
             mode, append_dim='a', 'time'
+        bar.update(N_times)
