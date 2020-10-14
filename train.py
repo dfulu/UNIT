@@ -4,7 +4,8 @@ Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses
 """
 
 from trainer import UNIT_Trainer
-from utils import get_all_data_loaders, prepare_sub_folder, write_html, write_loss, get_config, write_2images, Timer
+from utils import prepare_sub_folder, write_html, write_loss, get_config, write_2images, Timer
+from data import get_all_data_loaders
 
 import argparse
 import os
@@ -58,7 +59,7 @@ output_directory = os.path.join(opts.output_path + "/outputs", model_name)
 checkpoint_directory, image_directory = prepare_sub_folder(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml')) # copy config file to output folder
 
-# All small amount of datetimes have all NaN data
+# A small amount of datetimes have all NaN data
 all_nan_last_two_axis_any_channel = lambda x: torch.any(torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1), axis=-1)
 
 # Start training

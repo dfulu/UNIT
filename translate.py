@@ -5,53 +5,11 @@ Command line tool to translate data using pretrained UNIT network
 import xarray as xr
 import numpy as np
 
-from utils import get_config, get_all_data_loaders, reduce_height
-from data import construct_regridders
+from utils import get_config
+from data import get_dataset, Transformer
 from trainer import UNIT_Trainer
 
 import torch
-
-
-def post_process_constructor(config, x2x):
-    if config['preprocess_method'] in ['zeromean', 'normalise']:
-        
-        ds_agg_a = xr.load_dataset(config[f'agg_data_a'])
-        ds_agg_b = xr.load_dataset(config[f'agg_data_b'])
-        rg_a, rg_b = construct_regridders(ds_agg_a, ds_agg_b)
-
-        ds_agg_a = ds_agg_a if rg_a is None else rg_a(ds_agg_a).astype(np.float32)
-        ds_agg_b = ds_agg_b if rg_b is None else rg_b(ds_agg_b).astype(np.float32)
-        
-        ds_agg = ds_agg_a if x2x[-1]=='a' else ds_agg_b
-        
-        ds_agg = reduce_height(ds_agg, config['level_vars'])
-        
-        def undo_zeromean(x):
-            return x + ds_agg.sel(aggregate_statistic='mean').to_array()
-    
-        def undo_normalise(x):
-            x = x * ds_agg.sel(aggregate_statistic='std').to_array()
-            x = undo_zeromean(x)
-            return x
-        
-        if config['preprocess_method']=='zeromean':
-            return undo_zeromean
-        elif config['preprocess_method']=='normalise':
-            return undo_normalise
-    
-    else:
-        def unit_convert(x):
-            i = 0
-            for _, var_list in config['level_vars'].items():
-                for v in var_list:
-                    if 'tas' in v:
-                        x[i] = x[i] + 273
-                    elif v=='pr':
-                        x[i] = x[i]/1000
-                    i+=1
-            return x
-        
-        return unit_convert
     
     
 def network_translate_constructor(config, checkpoint, x2x):
@@ -77,18 +35,43 @@ def network_translate_constructor(config, checkpoint, x2x):
     
 
 
-def complete_translate_constructor(config, checkpoint, x2x):
-    
-    network_translate = network_translate_constructor(config, checkpoint, x2x)
-    post_process = post_process_constructor(config, x2x)
-    
-    def translate(x):
-        x = network_translate(x)
-        x = post_process(x)
-        return x
-    
-    return translate
+class Translator:
+    def __init__(self, config, checkpoint, x2x):
+        self.x2x = x2x
+        self.network_translate = network_translate_constructor(config, checkpoint, x2x)
+        self.trans = 
+        self._fit = False
 
+    def _check_fit(self):
+        is not self.self._fit:
+            raise ValueError("Need to call .fit() method first")
+            
+    def fit(ds_a, ds_b):
+        self.trans.fit(ds_a, ds_b)
+        self._fit=True
+        
+    def translate(self, ds):
+        self._check_fit()
+        
+        # preprocess
+        if self.x2x[0] == 'a':
+            ds = self.trans.transform_a(ds)
+        else:
+            ds = self.trans.transform_b(ds)
+            
+        # send through network
+        xr.zeros_like(ds)
+        ds.values = self.network_translate(ds.values)
+        
+        # undo preprocessing
+        if self.x2x[-1] == 'a':
+            ds = self.trans.inverse_a(ds)
+        else:
+            ds = self.trans.inverse_b(ds)
+            
+        return ds
+        
+            
 
 if __name__=='__main__':
     
@@ -115,20 +98,22 @@ if __name__=='__main__':
 
     # Load experiment setting
     config = get_config(args.config)
+    
+    # load the datasets
+    ds_a = get_dataset(config['data_zarr_a'], config['level_vars'])
+    ds_b = get_dataset(config['data_zarr_b'], config['level_vars'])
+    
+    # load pre/post processing transformer
+    prepost_trans = Transformer(config, downscale_consolidate=True)
+    prepost_trans.fit(ds_a, ds_b)
+    
+    pre_trans = prepost_trans.transform_a if args.x2x[0]=='a' else prepost_trans.transform_b
+    post_trans = prepost_trans.inverse_a if args.x2x[-1]=='a' else prepost_trans.inverse_b
 
-    # Setup model and data loader
-    # By constructing loader and extracting dataset from this we make sure all preprocessing is
-    # consistent
-    loaders = get_all_data_loaders(config, downscale_consolidate=True)
-    ds = loaders[0].dataset.ds if args.x2x[0]=='a' else loaders[2].dataset.ds
-    da = ds.to_array().transpose('run', 'time', 'variable', 'lat', 'lon')#.chunk({'variable': -1})
-
-    # append number of variables
-    config['input_dim_a'] = loaders[0].dataset.shape[1]
-    config['input_dim_b'] = loaders[2].dataset.shape[1]
-    del loaders
-
-    translate = complete_translate_constructor(config, args.checkpoint, args.x2x)
+    # load model 
+    config['input_dim_a'] = len(ds_a.keys())
+    config['input_dim_b'] = len(ds_b.keys())
+    net_trans = network_translate_constructor(config, args.checkpoint, args.x2x)
     
     mode = 'w-'
     append_dim = None
@@ -138,11 +123,17 @@ if __name__=='__main__':
     with progressbar.ProgressBar(max_value=N_times) as bar:
         
         for i in range(0, N_times, n_times):
-                
-            da_translated = xr.apply_ufunc(translate, 
-                                        da.isel(
-                                            time=slice(i, min(i+n_times, N_times))
-                                        ),
+            
+            # pre-rocess and convert to array
+            da = (
+                pre_trans(ds.isel(time=slice(i, min(i+n_times, N_times))))
+                .to_array()
+                .transpose('run', 'time', 'variable', 'lat', 'lon')
+            )
+            
+            # transform through network 
+            da = xr.apply_ufunc(translate, 
+                                        da,
                                         vectorize=True,
                                         dask='allowed',
                                         output_dtypes=['float'],
@@ -150,14 +141,22 @@ if __name__=='__main__':
                                         output_core_dims=[['variable', 'lat', 'lon']]
             )
             
-            da_translated = da_translated.chunk(dict(run=1, time=1, lat=-1, lon=-1))
-
-            da_translated.to_dataset(dim='variable').to_zarr(
+            # fix chunking
+            da = da.chunk(dict(run=1, time=1, lat=-1, lon=-1))
+            
+            # post-process
+            ds_translated = post_trans(da.to_dataset(dim='variable'))
+            
+            # append to zarr
+            ds_translated.to_zarr(
                 args.output_zarr, 
                 mode=mode, 
                 append_dim=append_dim,
                 consolidated=True
             )
+            
+            # update progress bar and change modes so dat can be appended
             bar.update(i)
             mode, append_dim='a', 'time'
+            
         bar.update(N_times)

@@ -12,17 +12,11 @@ import time
 from functools import reduce
 
 import torch
-from torch.utils.data import DataLoader
 from torch.optim import lr_scheduler
 import torch.nn.init as init
 import torchvision.utils as vutils
 
-import data
-
 # Methods
-# get_all_data_loaders      : primary data loader interface (load trainA, testA, trainB, testB)
-# get_data_loader_list      : list-based data loader
-# get_data_loader_folder    : folder-based data loader
 # get_config                : load yaml file
 # eformat                   :
 # write_2images             : save output image
@@ -35,81 +29,6 @@ import data
 # get_model_list
 # get_scheduler
 # weights_init
-
-
-def reduce_height(ds, level_vars):
-    ds_list = [ds.sel(height=h)[v].drop('height') for h,v in level_vars.items()]
-    if len(ds_list)>1:
-        ds = reduce(lambda ds1, ds2: ds1.merge(ds2), ds_list)
-    else:
-        ds = ds_list[0]
-    return ds
-
-
-def get_dataset(zarr_path, level_vars=None, filter_bounds=True):
-    """
-    zarr_path
-    reduce_height: {height: [variables],}
-    """
-    ds = xr.open_zarr(zarr_path, consolidated=True)
-    if filter_bounds:
-        ds = ds[[v for v in ds.data_vars if not 'bnds' in v]]
-    if level_vars is not None:
-        ds = reduce_height(ds, level_vars)
-    return ds
-
-
-def kelvin_to_celcius(ds):
-    temp_vars = [v for v in ds.data_vars if 'tas' in v]
-    for v in temp_vars:
-        ds[v] = ds[v] - 273
-    return ds
-
-def precip_kilograms_to_grams(ds):
-    precip_vars = [v for v in ds.data_vars if v=='pr']
-    for v in precip_vars:
-        ds[v] = ds[v] * 1000
-    return ds
-
-def get_all_data_loaders(conf, downscale_consolidate=False):
-
-    # Parameters
-    params = {'batch_size': conf['batch_size'],
-              'num_workers': conf['num_workers']}
-    
-    ds_a = get_dataset(conf['data_zarr_a'], conf['level_vars'])
-    ds_b = get_dataset(conf['data_zarr_b'], conf['level_vars'])
-    
-    # preprocess
-    if conf['preprocess_method'] in ['zeromean', 'normalise']:
-        ds_agg_a = reduce_height(xr.load_dataset(conf['agg_data_a']), conf['level_vars'])
-        ds_agg_b = reduce_height(xr.load_dataset(conf['agg_data_b']), conf['level_vars'])
-        ds_a = (ds_a - ds_agg_a.sel(aggregate_statistic='mean'))
-        ds_b = (ds_b - ds_agg_b.sel(aggregate_statistic='mean'))
-        if conf['preprocess_method'] == 'normalise':
-            ds_a = ds_a/ds_agg_a.sel(aggregate_statistic='std')
-            ds_b = ds_b/ds_agg_b.sel(aggregate_statistic='std')
-    else:
-        ds_a = kelvin_to_celcius(ds_a)
-        ds_a = precip_kilograms_to_grams(ds_a)
-        ds_b = kelvin_to_celcius(ds_b)
-        ds_b = precip_kilograms_to_grams(ds_b)
-    
-    # match to the coarsest resolution of the pair
-    if downscale_consolidate:
-        rg_a, rg_b = data.construct_regridders(ds_a, ds_b)
-        # regridders allow lazy evaluation
-        ds_a = ds_a if rg_a is None else rg_a(ds_a).astype(np.float32)
-        ds_b = ds_b if rg_b is None else rg_b(ds_b).astype(np.float32)
-    
-    dataset_a_train, dataset_a_test = data.train_test_split(data.ModelRunsDataset(ds_a), conf['test_size'])
-    dataset_b_train, dataset_b_test = data.train_test_split(data.ModelRunsDataset(ds_b), conf['test_size'])
-    
-    loaders = [torch.utils.data.DataLoader(d, **params) for d in 
-                  [dataset_a_train, dataset_a_test, 
-                   dataset_b_train, dataset_b_test]
-              ]
-    return loaders
 
 
 def get_config(config_path):
