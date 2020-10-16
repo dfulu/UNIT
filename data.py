@@ -181,9 +181,10 @@ class CustomTransformer(Normaliser):
     
     Scale all variables so precip and temps are given equivalent losses (ish).
     """
-    def __init__(self, conf, downscale_consolidate=True, field_norm=True):
+    def __init__(self, conf, downscale_consolidate=True, tas_field_norm=True, pr_field_norm=False):
         super().__init__(conf, downscale_consolidate)
-        self.field_norm = field_norm
+        self.tas_field_norm = tas_field_norm
+        self.pr_field_norm = pr_field_norm
 
     def fit(ds_a, ds_b):
         # match to the coarsest resolution of the pair
@@ -198,9 +199,12 @@ class CustomTransformer(Normaliser):
             self.rg_a = self.rg_b = None
             
         # same transforms to both datasets
-        self.ds_agg = 0.5*(self.ds_agg_a+self.ds_agg_b)
-        if not self.field_norm:
-            self.ds_agg = self.ds_agg_a.mean(dim=('lat', 'lon'))
+        self.ds_agg = 0.5 * (self.ds_agg_a + self.ds_agg_b)
+        if not self.tas_field_norm:
+            temp_vars = [k for k in ds.keys() if k.startswith('tas')]
+            self.ds_agg[temp_vars] = self.ds_agg[temp_vars].mean(dim=('lat', 'lon'))
+        if not self.pr_field_norm:
+            self.ds_agg['pr_4root'] = self.ds_agg['pr_4root'].mean(dim=('lat', 'lon'))
             
         self.ds_agg_a = self.ds_agg_b = self.ds_agg
             
