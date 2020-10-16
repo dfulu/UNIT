@@ -9,6 +9,8 @@ import numpy as np
 import xesmf as xe
 import torch
 
+from abc import ABC
+
 
 def reduce_height(ds, level_vars):
     ds_list = [ds.sel(height=h)[v].drop('height') for h,v in level_vars.items()]
@@ -69,17 +71,14 @@ def precip_mm_to_kg(ds):
     return ds
 
 
-class Transformer:
-    def __init__(self, conf, downscale_consolidate=True):
-        self.method = conf['preprocess_method'] 
+class Transformer(ABC):
+    def __init__(self, downscale_consolidate=True):
         self.downscale_consolidate = downscale_consolidate
         self._fit = False
-        
-        if self.method in ['zeromean', 'normalise']:
-            self.ds_agg_a = reduce_height(xr.load_dataset(conf['agg_data_a']), conf['level_vars'])
-            self.ds_agg_b = reduce_height(xr.load_dataset(conf['agg_data_b']), conf['level_vars'])
-        else:
-            self.ds_agg_a = self.ds_agg_a = None
+        self.ds_agg_a = None
+        self.ds_agg_b = None
+        self.rg_a = None
+        self.rg_b = None
             
     def _check_fit(self):
         is not self.self._fit:
@@ -98,49 +97,13 @@ class Transformer:
             self.rg_a = self.rg_b = None
         self._fit=True
         
+    @abstractmethod
     def _transform(self, ds, rg, ds_agg):
+        pass
         
-        ds = ds if rg is None else rg(ds).astype(np.float32)
-        
-        if self.method == 'zeromean':
-            ds = ds - ds_agg.sel(aggregate_statistic='mean')
-        
-        elif self.method == 'normalise':
-            ds = ds - ds_agg.sel(aggregate_statistic='mean')
-            ds = ds / ds_agg.sel(aggregate_statistic='std')
-        
-        elif self.method == 'units':
-            ds = precip_kilograms_to_mm(ds)
-            ds = kelvin_to_celcius(ds)
-            
-        elif self.method is None:
-            pass
-            
-        else:
-            raise ValueError(f'Do not recognise {self.method}')
-        
-        return ds
-        
+    @abstractmethod
     def _inverse(self, ds, ds_agg):
-        
-        if self.method == 'zeromean':
-            ds = ds + ds_agg.sel(aggregate_statistic='mean')
-        
-        elif self.method == 'normalise':
-            ds = ds * ds_agg.sel(aggregate_statistic='std')
-            ds = ds + ds_agg.sel(aggregate_statistic='mean')
-        
-        elif self.method == 'units':
-            ds = precip_mm_to_kg(ds)
-            ds = celcius_to_kelvin(ds)
-        
-        elif self.method is None:
-            pass
-        
-        else:
-            raise ValueError(f'Do not recognise {self.method}')
-            
-        return ds
+        pass
     
     def transform_a(self, ds):
         self._check_fit()
@@ -157,6 +120,113 @@ class Transformer:
     def inverse_b(self, ds):
         self._check_fit()
         return self._inverse(ds, self.ds_agg_b)
+
+
+class Normaliser(Transformer):
+    def __init__(self, conf, downscale_consolidate=True):
+        super().__init__(downscale_consolidate)
+        self.ds_agg_a = reduce_height(xr.load_dataset(conf['agg_data_a']), conf['level_vars'])
+        self.ds_agg_b = reduce_height(xr.load_dataset(conf['agg_data_b']), conf['level_vars'])
+        
+    def _transform(self, ds, rg, ds_agg):
+        ds = ds if rg is None else rg(ds).astype(np.float32)
+        ds = ds - ds_agg.sel(aggregate_statistic='mean')
+        ds = ds / ds_agg.sel(aggregate_statistic='std')
+        return ds
+        
+    def _inverse(self, ds, ds_agg):
+        ds = ds * ds_agg.sel(aggregate_statistic='std')
+        ds = ds + ds_agg.sel(aggregate_statistic='mean')   
+        return ds
+
+
+class ZeroMeaniser(Normaliser):
+    def __init__(self, conf, downscale_consolidate=True):
+        super().__init__(conf, downscale_consolidate)
+
+    def _transform(self, ds, rg, ds_agg):
+        ds = ds if rg is None else rg(ds).astype(np.float32)
+        ds = ds - ds_agg.sel(aggregate_statistic='mean')
+        return ds
+        
+    def _inverse(self, ds, ds_agg):
+        ds = ds + ds_agg.sel(aggregate_statistic='mean')   
+        return ds
+
+class UnitModifier(Transformer):
+    def __init__(self, conf, downscale_consolidate=True):
+        super().__init__(downscale_consolidate)
+        
+    def _transform(self, ds, rg, *args):
+        ds = ds if rg is None else rg(ds).astype(np.float32)
+        ds = kelvin_to_celcius(ds)
+        ds = precip_kilograms_to_mm(ds)
+        return ds
+        
+    def _inverse(self, ds, *args):
+        ds = precip_mm_to_kg(ds)
+        ds = celcius_to_kelvin(ds)
+        return ds
+
+    
+class CustomTransformer(Normaliser):
+    """A non-standard set of transforms for (tas, tasmin, tasmax, pr).
+    
+    To make the precip distribution less extreme:
+        pr -> pr^1/4
+        
+    Shift temperatures to celcius so significance of zero C is easy.
+    
+    Scale min/mean/max temperatures in same way so relation between them is obvious.
+    
+    Scale all variables so precip and temps are given equivalent losses (ish).
+    """
+    def __init__(self, conf, downscale_consolidate=True, field_norm=True):
+        super().__init__(conf, downscale_consolidate)
+        self.field_norm = field_norm
+
+    def fit(ds_a, ds_b):
+        # match to the coarsest resolution of the pair
+        if self.downscale_consolidate:
+            self.rg_a, self.rg_b = construct_regridders(ds_a, ds_b)
+            # modify aggregates since regridding is done before preprocessing
+            if self.ds_agg_a if not None and self.rg_a is not None:
+                self.ds_agg_a = self.rg_a(self.ds_agg_a).astype(np.float32)
+            if self.ds_agg_b if not None and self.rg_b is not None:
+                self.ds_agg_b = self.rg_b(self.ds_agg_b).astype(np.float32)
+        else:
+            self.rg_a = self.rg_b = None
+            
+        # same transforms to both datasets
+        self.ds_agg = 0.5*(self.ds_agg_a+self.ds_agg_b)
+        if not self.field_norm:
+            self.ds_agg = self.ds_agg_a.mean(dim=('lat', 'lon'))
+            
+        self.ds_agg_a = self.ds_agg_b = self.ds_agg
+            
+        self._fit=True
+        
+    def _transform(self, ds, rg, ds_agg):
+        ds = ds if rg is None else rg(ds).astype(np.float32)
+        
+        if 'pr' in ds.keys():
+            ds['pr'] = ds['pr']**(1/4)
+            ds['pr'] /= ds_agg['pr_4root'].sel(aggregate_statistic='std')
+            
+        ds = kelvin_to_celcius(ds)
+        temp_vars = [k for k in ds.keys() if k.startswith('tas')]
+        ds[temp_vars] /= ds_agg['tas'].sel(aggregate_statistic='std')
+        return ds
+        
+    def _inverse(self, ds, ds_agg):
+        if 'pr' in ds.keys():
+            ds['pr'] *= ds_agg['pr_4root'].sel(aggregate_statistic='std')
+            ds['pr'] = ds['pr']**4
+            
+        temp_vars = [k for k in ds.keys() if k.startswith('tas')]
+        ds[temp_vars] *= ds_agg['tas'].sel(aggregate_statistic='std')
+        ds = celcius_to_kelvin(ds)
+        return ds
 
 
 class ModelRunsDataset(torch.utils.data.Dataset):
