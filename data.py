@@ -9,7 +9,7 @@ import numpy as np
 import xesmf as xe
 import torch
 
-from abc import ABC
+from abc import ABC, abstractmethod
 
 
 def reduce_height(ds, level_vars):
@@ -81,7 +81,7 @@ class Transformer(ABC):
         self.rg_b = None
             
     def _check_fit(self):
-        is not self.self._fit:
+        if not self.self._fit:
             raise ValueError("Need to call .fit() method first")
             
     def fit(ds_a, ds_b):
@@ -89,9 +89,9 @@ class Transformer(ABC):
         if self.downscale_consolidate:
             self.rg_a, self.rg_b = construct_regridders(ds_a, ds_b)
             # modify aggregates since regridding is done before preprocessing
-            if self.ds_agg_a if not None and self.rg_a is not None:
+            if self.ds_agg_a is not None and self.rg_a is not None:
                 self.ds_agg_a = self.rg_a(self.ds_agg_a).astype(np.float32)
-            if self.ds_agg_b if not None and self.rg_b is not None:
+            if self.ds_agg_b is not None and self.rg_b is not None:
                 self.ds_agg_b = self.rg_b(self.ds_agg_b).astype(np.float32)
         else:
             self.rg_a = self.rg_b = None
@@ -191,9 +191,9 @@ class CustomTransformer(Normaliser):
         if self.downscale_consolidate:
             self.rg_a, self.rg_b = construct_regridders(ds_a, ds_b)
             # modify aggregates since regridding is done before preprocessing
-            if self.ds_agg_a if not None and self.rg_a is not None:
+            if self.ds_agg_a is not None and self.rg_a is not None:
                 self.ds_agg_a = self.rg_a(self.ds_agg_a).astype(np.float32)
-            if self.ds_agg_b if not None and self.rg_b is not None:
+            if self.ds_agg_b is not None and self.rg_b is not None:
                 self.ds_agg_b = self.rg_b(self.ds_agg_b).astype(np.float32)
         else:
             self.rg_a = self.rg_b = None
@@ -301,7 +301,20 @@ def get_all_data_loaders(conf, downscale_consolidate=True):
     ds_a = get_dataset(conf['data_zarr_a'], conf['level_vars'])
     ds_b = get_dataset(conf['data_zarr_b'], conf['level_vars'])
     
-    trans = Transformer(conf, downscale_consolidate=downscale_consolidate)
+    if conf['preprocess_method']=='zeromean':
+        trans = ZeroMeaniser(conf, downscale_consolidate=downscale_consolidate)
+    elif conf['preprocess_method']=='normalise':
+        trans = Normaliser(conf, downscale_consolidate=downscale_consolidate)
+    elif conf['preprocess_method']=='units':
+        trans = UnitModifier(conf, downscale_consolidate=downscale_consolidate)
+    elif conf['preprocess_method']=='custom_allfield':
+        trans = CustomTransformer(conf, downscale_consolidate=downscale_consolidate, tas_field_norm=True, pr_field_norm=True)
+    elif conf['preprocess_method']=='custom_tasfield':
+        trans = CustomTransformer(conf, downscale_consolidate=downscale_consolidate, tas_field_norm=True, pr_field_norm=False)
+    elif conf['preprocess_method']=='custom_prfield':
+        trans = CustomTransformer(conf, downscale_consolidate=downscale_consolidate, tas_field_norm=False, pr_field_norm=True)
+    else:
+        raise ValueError(f'Unrecognised preprocess_method : {conf['preprocess_method']}')
     trans.fit(ds_a, ds_b)
     
     ds_a = trans.tranform_a(ds_a)

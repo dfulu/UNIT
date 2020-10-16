@@ -6,7 +6,12 @@ import xarray as xr
 import numpy as np
 
 from utils import get_config
-from data import get_dataset, Transformer
+from data import (get_dataset, 
+                  CustomTransformer, 
+                  UnitModifier, 
+                  ZeroMeaniser, 
+                  Normaliser
+)
 from trainer import UNIT_Trainer
 
 import torch
@@ -32,44 +37,6 @@ def network_translate_constructor(config, checkpoint, x2x):
         x = x.cpu().detach().numpy()
         return x[0]
     return network_translate
-    
-
-
-class Translator:
-    def __init__(self, config, checkpoint, x2x):
-        self.x2x = x2x
-        self.network_translate = network_translate_constructor(config, checkpoint, x2x)
-        self.trans = 
-        self._fit = False
-
-    def _check_fit(self):
-        is not self.self._fit:
-            raise ValueError("Need to call .fit() method first")
-            
-    def fit(ds_a, ds_b):
-        self.trans.fit(ds_a, ds_b)
-        self._fit=True
-        
-    def translate(self, ds):
-        self._check_fit()
-        
-        # preprocess
-        if self.x2x[0] == 'a':
-            ds = self.trans.transform_a(ds)
-        else:
-            ds = self.trans.transform_b(ds)
-            
-        # send through network
-        xr.zeros_like(ds)
-        ds.values = self.network_translate(ds.values)
-        
-        # undo preprocessing
-        if self.x2x[-1] == 'a':
-            ds = self.trans.inverse_a(ds)
-        else:
-            ds = self.trans.inverse_b(ds)
-            
-        return ds
         
             
 
@@ -104,7 +71,20 @@ if __name__=='__main__':
     ds_b = get_dataset(config['data_zarr_b'], config['level_vars'])
     
     # load pre/post processing transformer
-    prepost_trans = Transformer(config, downscale_consolidate=True)
+    if config['preprocess_method']=='zeromean':
+        prepost_trans = ZeroMeaniser(config, downscale_consolidate=True)
+    elif config['preprocess_method']=='normalise':
+        prepost_trans = Normaliser(config, downscale_consolidate=True)
+    elif config['preprocess_method']=='units':
+        prepost_trans = UnitModifier(config, downscale_consolidate=True)
+    elif config['preprocess_method']=='custom_allfield':
+        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=True, pr_field_norm=True)
+    elif config['preprocess_method']=='custom_tasfield':
+        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=True, pr_field_norm=False)
+    elif config['preprocess_method']=='custom_prfield':
+        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=False, pr_field_norm=True)
+    else:
+        raise ValueError(f'Unrecognised preprocess_method : {conf['preprocess_method']}')
     prepost_trans.fit(ds_a, ds_b)
     
     pre_trans = prepost_trans.transform_a if args.x2x[0]=='a' else prepost_trans.transform_b
