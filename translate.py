@@ -83,6 +83,8 @@ if __name__=='__main__':
         prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=True, pr_field_norm=False)
     elif config['preprocess_method']=='custom_prfield':
         prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=False, pr_field_norm=True)
+    elif config['preprocess_method']=='custom_nofield':
+        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=False, pr_field_norm=False)
     else:
         raise ValueError(f'Unrecognised preprocess_method : {conf['preprocess_method']}')
     prepost_trans.fit(ds_a, ds_b)

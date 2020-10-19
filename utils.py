@@ -9,7 +9,6 @@ import os
 import math
 import yaml
 import time
-from functools import reduce
 
 import torch
 from torch.optim import lr_scheduler

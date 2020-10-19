@@ -1,19 +1,18 @@
-"""
-Copyright (C) 2018 NVIDIA Corporation.  All rights reserved.
-Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
-"""
-import os.path
 from sklearn.model_selection import train_test_split as _array_train_test_split
 import xarray as xr
 import numpy as np
 import xesmf as xe
 import torch
+from functools import reduce
 
 from abc import ABC, abstractmethod
 
 
 def reduce_height(ds, level_vars):
-    ds_list = [ds.sel(height=h)[v].drop('height') for h,v in level_vars.items()]
+    ds_list = []
+    for h, v in level_vars.items():
+        ds_list += [ds.sel(height=h)[[k for k in ds.keys() if np.any([vi in k for vi in v])]].drop('height')]
+    
     if len(ds_list)>1:
         ds = reduce(lambda ds1, ds2: ds1.merge(ds2), ds_list)
     else:
@@ -81,10 +80,10 @@ class Transformer(ABC):
         self.rg_b = None
             
     def _check_fit(self):
-        if not self.self._fit:
+        if not self._fit:
             raise ValueError("Need to call .fit() method first")
             
-    def fit(ds_a, ds_b):
+    def fit(self, ds_a, ds_b):
         # match to the coarsest resolution of the pair
         if self.downscale_consolidate:
             self.rg_a, self.rg_b = construct_regridders(ds_a, ds_b)
@@ -130,13 +129,13 @@ class Normaliser(Transformer):
         
     def _transform(self, ds, rg, ds_agg):
         ds = ds if rg is None else rg(ds).astype(np.float32)
-        ds = ds - ds_agg.sel(aggregate_statistic='mean')
-        ds = ds / ds_agg.sel(aggregate_statistic='std')
+        ds = ds - ds_agg.sel(aggregate_statistic='mean').drop('aggregate_statistic')
+        ds = ds / ds_agg.sel(aggregate_statistic='std').drop('aggregate_statistic')
         return ds
         
     def _inverse(self, ds, ds_agg):
-        ds = ds * ds_agg.sel(aggregate_statistic='std')
-        ds = ds + ds_agg.sel(aggregate_statistic='mean')   
+        ds = ds * ds_agg.sel(aggregate_statistic='std').drop('aggregate_statistic')
+        ds = ds + ds_agg.sel(aggregate_statistic='mean').drop('aggregate_statistic')
         return ds
 
 
@@ -146,11 +145,11 @@ class ZeroMeaniser(Normaliser):
 
     def _transform(self, ds, rg, ds_agg):
         ds = ds if rg is None else rg(ds).astype(np.float32)
-        ds = ds - ds_agg.sel(aggregate_statistic='mean')
+        ds = ds - ds_agg.sel(aggregate_statistic='mean').drop('aggregate_statistic')
         return ds
         
     def _inverse(self, ds, ds_agg):
-        ds = ds + ds_agg.sel(aggregate_statistic='mean')   
+        ds = ds + ds_agg.sel(aggregate_statistic='mean').drop('aggregate_statistic')
         return ds
 
 class UnitModifier(Transformer):
@@ -186,7 +185,7 @@ class CustomTransformer(Normaliser):
         self.tas_field_norm = tas_field_norm
         self.pr_field_norm = pr_field_norm
 
-    def fit(ds_a, ds_b):
+    def fit(self, ds_a, ds_b):
         # match to the coarsest resolution of the pair
         if self.downscale_consolidate:
             self.rg_a, self.rg_b = construct_regridders(ds_a, ds_b)
@@ -201,8 +200,9 @@ class CustomTransformer(Normaliser):
         # same transforms to both datasets
         self.ds_agg = 0.5 * (self.ds_agg_a + self.ds_agg_b)
         if not self.tas_field_norm:
-            temp_vars = [k for k in ds.keys() if k.startswith('tas')]
-            self.ds_agg[temp_vars] = self.ds_agg[temp_vars].mean(dim=('lat', 'lon'))
+            temp_vars = [k for k in  self.ds_agg.keys() if k.startswith('tas')]
+            for k in temp_vars:
+                self.ds_agg[k] = self.ds_agg[k].mean(dim=('lat', 'lon'))
         if not self.pr_field_norm:
             self.ds_agg['pr_4root'] = self.ds_agg['pr_4root'].mean(dim=('lat', 'lon'))
             
@@ -215,20 +215,22 @@ class CustomTransformer(Normaliser):
         
         if 'pr' in ds.keys():
             ds['pr'] = ds['pr']**(1/4)
-            ds['pr'] /= ds_agg['pr_4root'].sel(aggregate_statistic='std')
+            ds['pr'] /= ds_agg['pr_4root'].sel(aggregate_statistic='std').drop('aggregate_statistic')
             
         ds = kelvin_to_celcius(ds)
         temp_vars = [k for k in ds.keys() if k.startswith('tas')]
-        ds[temp_vars] /= ds_agg['tas'].sel(aggregate_statistic='std')
+        for k in temp_vars:
+            ds[k] /= ds_agg['tas'].sel(aggregate_statistic='std').drop('aggregate_statistic')
         return ds
         
     def _inverse(self, ds, ds_agg):
         if 'pr' in ds.keys():
-            ds['pr'] *= ds_agg['pr_4root'].sel(aggregate_statistic='std')
+            ds['pr'] *= ds_agg['pr_4root'].sel(aggregate_statistic='std').drop('aggregate_statistic')
             ds['pr'] = ds['pr']**4
             
         temp_vars = [k for k in ds.keys() if k.startswith('tas')]
-        ds[temp_vars] *= ds_agg['tas'].sel(aggregate_statistic='std')
+        for k in temp_vars:
+            ds[k] *= ds_agg['tas'].sel(aggregate_statistic='std').drop('aggregate_statistic')
         ds = celcius_to_kelvin(ds)
         return ds
 
@@ -313,12 +315,14 @@ def get_all_data_loaders(conf, downscale_consolidate=True):
         trans = CustomTransformer(conf, downscale_consolidate=downscale_consolidate, tas_field_norm=True, pr_field_norm=False)
     elif conf['preprocess_method']=='custom_prfield':
         trans = CustomTransformer(conf, downscale_consolidate=downscale_consolidate, tas_field_norm=False, pr_field_norm=True)
+    elif conf['preprocess_method']=='custom_nofield':
+        trans = CustomTransformer(conf, downscale_consolidate=downscale_consolidate, tas_field_norm=False, pr_field_norm=False)
     else:
-        raise ValueError(f'Unrecognised preprocess_method : {conf['preprocess_method']}')
+        raise ValueError(f"Unrecognised preprocess_method : {conf['preprocess_method']}")
     trans.fit(ds_a, ds_b)
     
-    ds_a = trans.tranform_a(ds_a)
-    ds_b = trans.tranform_b(ds_b)
+    ds_a = trans.transform_a(ds_a)
+    ds_b = trans.transform_b(ds_b)
     
     dataset_a_train, dataset_a_test = train_test_split(ModelRunsDataset(ds_a), conf['test_size'])
     dataset_b_train, dataset_b_test = train_test_split(ModelRunsDataset(ds_b), conf['test_size'])
