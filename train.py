@@ -35,10 +35,13 @@ display_size = config['display_size']
 train_loader_a, test_loader_a, train_loader_b, test_loader_b = get_all_data_loaders(config, downscale_consolidate=True)
 
 # Selection of climate fields to display after a number of updates
-train_display_images_a = torch.cat([img for _, img in zip(range(display_size), train_loader_a)]).cuda()
-train_display_images_b = torch.cat([img for _, img in zip(range(display_size), train_loader_b)]).cuda()
-test_display_images_a  = torch.cat([img for _, img in zip(range(display_size), test_loader_a)]).cuda()
-test_display_images_b  = torch.cat([img for _, img in zip(range(display_size), test_loader_b)]).cuda()
+def generate_n(generator, n):
+    return torch.cat([img for _, img in zip(range((n-1)//generator.batch_size + 1), generator)])[:n]
+
+train_display_images_a = generate_n(train_loader_a, display_size).cuda()
+train_display_images_b = generate_n(train_loader_b, display_size).cuda()
+test_display_images_a  = generate_n(test_loader_a, display_size).cuda()
+test_display_images_b  = generate_n(test_loader_b, display_size).cuda()
 
 
 # Add some extra hyperpaameters with inferred info from data
@@ -60,14 +63,18 @@ checkpoint_directory, image_directory = prepare_sub_folder(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml')) # copy config file to output folder
 
 # A small amount of datetimes have all NaN data
-all_nan_last_two_axis_any_channel = lambda x: torch.any(torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1), axis=-1)
+def all_nan_last_two_axis_any_channel(x):
+    #return torch.any(torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1), axis=-1)
+    return torch.isnan(x).all(dim=-1).all(dim=-1).any()
 
 # Start training
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
+
 while True:
     for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
         # Skip NaN fields
         if all_nan_last_two_axis_any_channel(images_a) or all_nan_last_two_axis_any_channel(images_b):
+            print('Skipped on it = {}'.format(it))
             continue
         
         trainer.update_learning_rate()

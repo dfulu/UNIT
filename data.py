@@ -214,7 +214,8 @@ class CustomTransformer(Normaliser):
         ds = ds if rg is None else rg(ds).astype(np.float32)
         
         if 'pr' in ds.keys():
-            ds['pr'] = ds['pr']**(1/4)
+            # In some of the data numerical error means 0 -> O(1e-22). Therefore need to clip.
+            ds['pr'] = ds['pr'].clip(0, None)**(1/4)
             ds['pr'] /= ds_agg['pr_4root'].sel(aggregate_statistic='std').drop('aggregate_statistic')
             
         ds = kelvin_to_celcius(ds)
