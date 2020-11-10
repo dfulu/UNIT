@@ -97,10 +97,12 @@ class VAEGen(nn.Module):
         activ = params['activ']
         pad_type = params['pad_type']
         output_activ = params['output_activ']
+        upsample = params['upsample']
 
         # content encoder
         self.enc = ContentEncoder(n_downsample, n_res, input_dim, dim, 'in', activ, pad_type=pad_type)
-        self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, input_dim, res_norm='in', activ=activ, pad_type=pad_type, output_activ=output_activ)
+        self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, input_dim, res_norm='in', 
+                           activ=activ, pad_type=pad_type, output_activ=output_activ, upsample=upsample)
 
     def forward(self, images):
         # This is a reduced VAE implementation where we assume the outputs are multivariate Gaussian distribution with mean = hiddens and std_dev = all ones.
@@ -164,15 +166,25 @@ class ContentEncoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='adain', activ='relu', pad_type='zero', output_activ='none'):
+    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='adain', 
+                 activ='relu', pad_type='zero', output_activ='none', upsample='nearest'):
         super(Decoder, self).__init__()
+        
+        if upsample=='nearest':
+            def _decode_upsampler(C): return nn.Upsample(scale_factor=2)
+        elif upsample=='bilinear':
+            def _decode_upsampler(C): return nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        elif upsample=='conv': 
+            def _decode_upsampler(C): return nn.ConvTranspose2d(C, C, kernel_size=2, stride=2)
+        else:
+            assert 0, "`upsample` must be one of ['nearest', 'bilinear', 'conv']"
 
         self.model = []
         # AdaIN residual blocks
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
         # upsampling blocks
         for i in range(n_upsample):
-            self.model += [nn.Upsample(scale_factor=2),
+            self.model += [_decode_upsampler(dim),
                            Conv2dBlock(dim, dim // 2, 5, 1, 2, norm='ln', activation=activ, pad_type=pad_type)]
             dim //= 2
 
