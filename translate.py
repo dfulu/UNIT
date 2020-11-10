@@ -86,7 +86,7 @@ if __name__=='__main__':
     elif config['preprocess_method']=='custom_nofield':
         prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=False, pr_field_norm=False)
     else:
-        raise ValueError(f'Unrecognised preprocess_method : {conf['preprocess_method']}')
+        raise ValueError(f"Unrecognised preprocess_method : {conf['preprocess_method']}")
     prepost_trans.fit(ds_a, ds_b)
     
     pre_trans = prepost_trans.transform_a if args.x2x[0]=='a' else prepost_trans.transform_b
@@ -97,11 +97,14 @@ if __name__=='__main__':
     config['input_dim_b'] = len(ds_b.keys())
     net_trans = network_translate_constructor(config, args.checkpoint, args.x2x)
     
+    ds = ds_a if args.x2x[0]=='a' else ds_b
+    
     mode = 'w-'
     append_dim = None
-    n_times=100
-    N_times = len(da.time)
-
+    n_times = 100
+    N_times = len(ds.time)
+    
+    
     with progressbar.ProgressBar(max_value=N_times) as bar:
         
         for i in range(0, N_times, n_times):
@@ -114,13 +117,14 @@ if __name__=='__main__':
             )
             
             # transform through network 
-            da = xr.apply_ufunc(translate, 
-                                        da,
-                                        vectorize=True,
-                                        dask='allowed',
-                                        output_dtypes=['float'],
-                                        input_core_dims=[['variable', 'lat', 'lon']],
-                                        output_core_dims=[['variable', 'lat', 'lon']]
+            da = xr.apply_ufunc(
+                net_trans, 
+                da,
+                vectorize=True,
+                dask='allowed',
+                output_dtypes=['float'],
+                input_core_dims=[['variable', 'lat', 'lon']],
+                output_core_dims=[['variable', 'lat', 'lon']]
             )
             
             # fix chunking
