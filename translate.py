@@ -5,14 +5,14 @@ Command line tool to translate data using pretrained UNIT network
 import xarray as xr
 import numpy as np
 
-from utils import get_config
-from data import (get_dataset, 
+from climatetranslation.unit.utils import get_config
+from climatetranslation.unit.data import (get_dataset, 
                   CustomTransformer, 
                   UnitModifier, 
                   ZeroMeaniser, 
                   Normaliser
 )
-from trainer import UNIT_Trainer
+from climatetranslation.unit.trainer import UNIT_Trainer
 
 import torch
     
