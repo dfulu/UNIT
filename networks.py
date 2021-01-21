@@ -9,6 +9,8 @@ from torch import nn
 from torch.autograd import Variable
 import torch
 import torch.nn.functional as F
+from torch.nn.modules.utils import _quadruple
+from torch.nn.common_types import _size_4_t
 
 
 ##################################################################################
@@ -259,6 +261,8 @@ class Conv2dBlock(nn.Module):
             self.pad = nn.ReplicationPad2d(padding)
         elif pad_type == 'zero':
             self.pad = nn.ZeroPad2d(padding)
+        elif pad_type == 'lonwrap':
+            self.pad = LatLonPad(padding, lon_dim=-1)
         else:
             assert 0, "Unsupported padding type: {}".format(pad_type)
 
@@ -428,3 +432,25 @@ def get_activation(activation):
         return None
     else:
         assert 0, "Unsupported activation: {}".format(activation)
+        
+        
+class LatLonPad(nn.Module):
+    __constants__ = ['padding', 'lon_dim', 'lat_mode', 'value']
+
+    def __init__(self, padding: _size_4_t, lon_dim: int, lat_mode: str = 'constant', value: float = 0.) -> None:
+        super(LatLonPad, self).__init__()
+        assert lat_mode in ['constant', 'circular']
+        self.padding = _quadruple(padding)
+        self.lon_dim = lon_dim
+        self.lat_mode = lat_mode
+        self.value = value
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        is1 = self.lon_dim==2 or self.lon_dim==-2
+        is2 = self.lon_dim==3 or self.lon_dim==-1
+        is_circular_pad = (is1, is1, is2, is2)
+        circ_padding = tuple(p if b else 0 for p, b in zip(self.padding, is_circular_pad))
+        zero_padding = tuple(p if not b else 0 for p, b in zip(self.padding, is_circular_pad))
+        x = F.pad(input, circ_padding, mode='circular')
+        x = F.pad(x, zero_padding, self.lat_mode, self.value)
+        return x
