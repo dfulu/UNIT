@@ -19,7 +19,7 @@ import tensorboardX
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--config', type=str, default='configs/hadgem3_to_cam5_nat-hist.yaml', help='Path to the config file.')
+parser.add_argument('--config', type=str, default='configs/v7_example.yaml', help='Path to the config file.')
 parser.add_argument('--output_path', type=str, default='/home/dfulu/model_outputs', help="outputs path")
 parser.add_argument("--resume", action="store_true")
 opts = parser.parse_args()
@@ -32,7 +32,11 @@ max_iter = config['max_iter']
 display_size = config['display_size']
 
 # data loaders
-train_loader_a, test_loader_a, train_loader_b, test_loader_b = get_all_data_loaders(config, downscale_consolidate=True)
+train_loader_a, test_loader_a, train_loader_b, test_loader_b = get_all_data_loaders(config)
+
+# land masks
+land_mask_a = train_loader_a.dataset.land_mask
+land_mask_b = train_loader_b.dataset.land_mask
 
 # Selection of climate fields to display after a number of updates
 def generate_n(generator, n):
@@ -48,6 +52,8 @@ test_display_images_b  = generate_n(test_loader_b, display_size).cuda()
 hyperparams = config
 hyperparams['input_dim_a'] = train_loader_a.dataset.shape[1]
 hyperparams['input_dim_b'] = train_loader_b.dataset.shape[1]
+hyperparams['land_mask_a'] = land_mask_a
+hyperparams['land_mask_b'] = land_mask_b
 print(hyperparams['input_dim_a'])
 
 
@@ -70,49 +76,50 @@ def all_nan_last_two_axis_any_channel(x):
 # Start training
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
 
-while True:
-    for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
-        # Skip NaN fields
-        if all_nan_last_two_axis_any_channel(images_a) or all_nan_last_two_axis_any_channel(images_b):
-            print('Skipped on it = {}'.format(it))
-            continue
-        
-        trainer.update_learning_rate()
-        images_a, images_b = images_a.cuda().detach(), images_b.cuda().detach()
+with torch.autograd.set_detect_anomaly(True):
+    while True:
+        for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
+            # Skip NaN fields
+            if all_nan_last_two_axis_any_channel(images_a) or all_nan_last_two_axis_any_channel(images_b):
+                print('Skipped on it = {}'.format(it))
+                continue
 
-        with Timer("Elapsed time in update: %f"):
-            # Main training code
-            trainer.dis_update(images_a, images_b, config)
-            trainer.gen_update(images_a, images_b, config)
-            torch.cuda.synchronize()
+            trainer.update_learning_rate()
+            images_a, images_b = images_a.cuda().detach(), images_b.cuda().detach()
 
-        # Dump training stats in log file
-        if (iterations + 1) % config['log_iter'] == 0:
-            print("Iteration: %08d/%08d" % (iterations + 1, max_iter))
-            write_loss(iterations, trainer, train_writer)
+            with Timer("Elapsed time in update: %f"):
+                # Main training code
+                trainer.dis_update(images_a, images_b, config)
+                trainer.gen_update(images_a, images_b, config)
+                torch.cuda.synchronize()
 
-        # Write images
-        if (iterations + 1) % config['image_save_iter'] == 0:
-            with torch.no_grad():
-                test_image_outputs = trainer.sample(test_display_images_a, test_display_images_b)
-                train_image_outputs = trainer.sample(train_display_images_a, train_display_images_b)
-                
-            # only pass first 3 channels for image
-            write_2images(test_image_outputs, display_size, image_directory, 'test_%08d' % (iterations + 1))
-            write_2images(train_image_outputs, display_size, image_directory, 'train_%08d' % (iterations + 1))
-            # HTML
-            write_html(output_directory + "/index.html", iterations + 1, config['image_save_iter'], 'images')
+            # Dump training stats in log file
+            if (iterations + 1) % config['log_iter'] == 0:
+                print("Iteration: %08d/%08d" % (iterations + 1, max_iter))
+                write_loss(iterations, trainer, train_writer)
 
-        if (iterations + 1) % config['image_display_iter'] == 0:
-            with torch.no_grad():
-                image_outputs = trainer.sample(train_display_images_a, train_display_images_b)
-            write_2images(image_outputs, display_size, image_directory, 'train_current')
+            # Write images
+            if (iterations + 1) % config['image_save_iter'] == 0:
+                with torch.no_grad():
+                    test_image_outputs = trainer.sample(test_display_images_a, test_display_images_b)
+                    train_image_outputs = trainer.sample(train_display_images_a, train_display_images_b)
 
-        # Save network weights
-        if (iterations + 1) % config['snapshot_save_iter'] == 0:
-            trainer.save(checkpoint_directory, iterations)
+                # only pass first 3 channels for image
+                write_2images(test_image_outputs, display_size, image_directory, 'test_%08d' % (iterations + 1))
+                write_2images(train_image_outputs, display_size, image_directory, 'train_%08d' % (iterations + 1))
+                # HTML
+                write_html(output_directory + "/index.html", iterations + 1, config['image_save_iter'], 'images')
 
-        iterations += 1
-        if iterations >= max_iter:
-            sys.exit('Finish training')
+            if (iterations + 1) % config['image_display_iter'] == 0:
+                with torch.no_grad():
+                    image_outputs = trainer.sample(train_display_images_a, train_display_images_b)
+                write_2images(image_outputs, display_size, image_directory, 'train_current')
+
+            # Save network weights
+            if (iterations + 1) % config['snapshot_save_iter'] == 0:
+                trainer.save(checkpoint_directory, iterations)
+
+            iterations += 1
+            if iterations >= max_iter:
+                sys.exit('Finish training')
 

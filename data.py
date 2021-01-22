@@ -2,11 +2,13 @@ from sklearn.model_selection import train_test_split as _array_train_test_split
 import xarray as xr
 import numpy as np
 import xesmf as xe
+from global_land_mask import globe
 import torch
 from functools import reduce
+import cftime
+import datetime
 import warnings
 from dask.array.core import PerformanceWarning
-
 
 from abc import ABC, abstractmethod
 
@@ -23,6 +25,52 @@ def reduce_height(ds, level_vars):
     else:
         ds = ds[[vi for _, v in level_vars.items() for vi in v]]
     return ds
+
+    
+def any_calendar_to_string(dt):
+    if isinstance(dt, np.datetime64):
+        return str(dt).split('.')[0]
+    elif isinstance(dt, datetime.datetime):
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+    elif isinstance(dt, cftime.datetime):
+        return dt.strftime().replace(' ', 'T')
+
+
+def any_calendar_to_datetime(dt):
+    if isinstance(dt, datetime.datetime):
+        return dt
+    elif isinstance(dt, np.datetime64):
+        return datetime.datetime.strptime(
+        str(dt).split('.')[0], 
+        "%Y-%m-%dT%H:%M:%S"
+        )
+    elif isinstance(dt, cftime.datetime):
+        return datetime.datetime.strptime(
+            dt.strftime(),
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+
+def datemin_to_string(dts):
+    dts = [any_calendar_to_datetime(dt) for dt in dts]
+    return any_calendar_to_string(min(dts))
+
+
+def datemax_to_string(dts):
+    dts = [any_calendar_to_datetime(dt) for dt in dts]
+    return any_calendar_to_string(max(dts))
+
+
+def dataset_time_overlap(datasets_list):
+    start_time = datemax_to_string([ds.time.values.min() for ds in datasets_list])
+    end_time = datemin_to_string([ds.time.values.max() for ds in datasets_list])
+    if (
+        datetime.datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S") >=
+        datetime.datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%S")
+    ):
+        raise ValueError("start time ({}) and end time ({}) leave no overlap".format(start_time, end_time))
+    print("start time ({}) and end time ({})".format(start_time, end_time))
+    return [ds.sel(time=slice(start_time, end_time)) for ds in datasets_list]
 
 
 def filter_bounds(ds):
@@ -123,6 +171,29 @@ def precip_mm_to_kg(ds):
         ds[v] = ds[v] / (24*60**2)
     return ds
 
+def z500_to_anomaly(ds):
+    """Convert z500 to anomaly in 100m"""
+    ds['z500'] = (ds['z500'] - 5500) / 100
+    return ds
+
+def z500_anomaly_to_z500(ds):
+    """Convert z500 anomaly in 100m to z500 normal"""
+    ds['z500'] = (ds['z500'] * 100) + 5500
+    return ds
+
+def temp_minmax_to_diff(ds):
+    if 'tas' in ds.keys():
+        for v in ['tasmin', 'tasmax']:
+            if v in ds.keys():
+                ds[v] = ds[v] - ds['tas']
+    return ds
+
+def temp_diff_to_minmax(ds):
+    if 'tas' in ds.keys():
+        for v in ['tasmin', 'tasmax']:
+            if v in ds.keys():
+                ds[v] = ds[v] + ds['tas']
+    return ds
 
 class Transformer(ABC):
     def __init__(self, conf):
@@ -142,10 +213,13 @@ class Transformer(ABC):
         # match to the coarsest resolution of the pair
         self.rg_a, self.rg_b = construct_regridders(ds_a, ds_b, self.conf['resolution_match'], self.conf['scale_method'], periodic)
         # modify aggregates since regridding is done before preprocessing
-        if self.ds_agg_a is not None and self.rg_a is not None:
-            self.ds_agg_a = self.rg_a(self.ds_agg_a).astype(np.float32)
-        if self.ds_agg_b is not None and self.rg_b is not None:
-            self.ds_agg_b = self.rg_b(self.ds_agg_b).astype(np.float32)
+        # BEGIN DEPRECATED
+        # agg data is now calculated after transform
+        #if self.ds_agg_a is not None and self.rg_a is not None:
+        #    self.ds_agg_a = self.rg_a(self.ds_agg_a).astype(np.float32)
+        #if self.ds_agg_b is not None and self.rg_b is not None:
+        #    self.ds_agg_b = self.rg_b(self.ds_agg_b).astype(np.float32)
+        # END DEPRECATED
         self._fit=True
         
     @abstractmethod
@@ -176,8 +250,8 @@ class Transformer(ABC):
 class Normaliser(Transformer):
     def __init__(self, conf):
         super().__init__(conf)
-        self.ds_agg_a = reduce_height(xr.load_dataset(conf['agg_data_a']), conf['level_vars'])
-        self.ds_agg_b = reduce_height(xr.load_dataset(conf['agg_data_b']), conf['level_vars'])
+        self.ds_agg_a = xr.load_dataset(conf['agg_data_a'])
+        self.ds_agg_b = xr.load_dataset(conf['agg_data_b'])
         
     def _transform(self, ds, rg, ds_agg):
         ds = ds if rg is None else rg(ds).astype(np.float32)
@@ -204,17 +278,24 @@ class ZeroMeaniser(Normaliser):
         ds = ds + ds_agg.sel(aggregate_statistic='mean').drop('aggregate_statistic')
         return ds
 
+
 class UnitModifier(Transformer):
     def __init__(self, conf):
         super().__init__(conf)
         
     def _transform(self, ds, rg, *args):
+        ds = ds if rg is None else rg(ds).astype(np.float32)
         ds = kelvin_to_celcius(ds)
         ds = precip_kilograms_to_mm(ds)
-        ds = ds if rg is None else rg(ds).astype(np.float32)
+        ds = z500_to_anomaly(ds)
+        if self.conf['tas_diff']:
+            ds = temp_minmax_to_diff(ds)
         return ds
         
     def _inverse(self, ds, *args):
+        if self.conf['tas_diff']:
+            ds = temp_diff_to_minmax(ds)
+        ds = z500_anomaly_to_z500(ds)
         ds = precip_mm_to_kg(ds)
         ds = celcius_to_kelvin(ds)
         return ds
@@ -232,19 +313,18 @@ class CustomTransformer(Normaliser):
     
     Scale all variables so precip and temps are given equivalent losses (ish).
     """
-    def __init__(self, conf, tas_field_norm=True, pr_field_norm=False, scale_method='bilinear'):
+    def __init__(self, conf, tas_field_norm=True, pr_field_norm=False):
         super().__init__(conf)
         self.tas_field_norm = tas_field_norm
         self.pr_field_norm = pr_field_norm
 
     def fit(self, ds_a, ds_b):
         super().fit(ds_a, ds_b)
-            
         # same transforms to both datasets
         self.ds_agg = 0.5 * (self.ds_agg_a + self.ds_agg_b)
         if not self.tas_field_norm:
-            temp_vars = [k for k in self.ds_agg.keys() if k.startswith('tas')]
-            for k in temp_vars:
+            all_other_vars = [k for k in self.ds_agg.keys() if k in ['tas', 'tasmin', 'tasmax', 'z500']]
+            for k in all_other_vars:
                 self.ds_agg[k] = self.ds_agg[k].mean(dim=('lat', 'lon'))
         if not self.pr_field_norm:
             self.ds_agg['pr_4root'] = self.ds_agg['pr_4root'].mean(dim=('lat', 'lon'))
@@ -255,33 +335,66 @@ class CustomTransformer(Normaliser):
     def _transform(self, ds, rg, ds_agg):
         ds = ds if rg is None else rg(ds).astype(np.float32)
         
+        # precipitation
         if 'pr' in ds.keys():
             # In some of the data numerical error means 0 -> O(1e-22). Therefore need to clip.
             ds['pr'] = ds['pr'].clip(0, None)**(1/4)
             ds['pr'] /= ds_agg['pr_4root'].sel(aggregate_statistic='std').drop('aggregate_statistic')
             
+        # temperature
         ds = kelvin_to_celcius(ds)
+        if self.conf['tas_diff']:
+            ds = temp_minmax_to_diff(ds)
         temp_vars = [k for k in ds.keys() if k.startswith('tas')]
         for k in temp_vars:
             ds[k] /= ds_agg['tas'].sel(aggregate_statistic='std').drop('aggregate_statistic')
-            
+        
+        # other
+        other_vars = [k for k in ds.keys() if k in ['z500']]
+        for k in other_vars:
+            ds[k] -= ds_agg[k].sel(aggregate_statistic='mean').drop('aggregate_statistic')
+            ds[k] /= ds_agg[k].sel(aggregate_statistic='std').drop('aggregate_statistic')
         return ds
         
     def _inverse(self, ds, ds_agg):
+        # precipitation
         if 'pr' in ds.keys():
             ds['pr'] *= ds_agg['pr_4root'].sel(aggregate_statistic='std').drop('aggregate_statistic')
             ds['pr'] = ds['pr']**4
             
+        # temperature
         temp_vars = [k for k in ds.keys() if k.startswith('tas')]
         for k in temp_vars:
             ds[k] *= ds_agg['tas'].sel(aggregate_statistic='std').drop('aggregate_statistic')
+        if self.conf['tas_diff']:
+            ds = temp_diff_to_minmax(ds)
         ds = celcius_to_kelvin(ds)
+        
+        # other
+        other_vars = [k for k in ds.keys() if k in ['z500']]
+        for k in other_vars:
+            ds[k] *= ds_agg[k].sel(aggregate_statistic='std').drop('aggregate_statistic')
+            ds[k] += ds_agg[k].sel(aggregate_statistic='mean').drop('aggregate_statistic')
         return ds
 
 
 class ModelRunsDataset(torch.utils.data.Dataset):
-    def __init__(self, ds):
-        self.ds = ds
+    def __init__(self, ds, use_land_mask=False):
+        # Ensure even valued image sides
+        self.ds = ds.isel(
+            lat=slice(0, len(ds.lat)//2 * 2),
+            lon=slice(0, len(ds.lon)//2 * 2)
+        )
+        self.land_mask = None
+        self.use_land_mask = use_land_mask
+        if use_land_mask:
+            lat = self.ds.lat.values.copy()
+            lon = self.ds.lon.values.copy()
+            lon[lon>180] = lon[lon>180]-360
+            lon[lon<=-180] = lon[lon<=-180]+360
+
+            lon_grid, lat_grid = np.meshgrid(lon,lat)
+            self.land_mask = torch.from_numpy(globe.is_land(lat_grid, lon_grid).astype(np.float32)).unsqueeze(0)
 
     def __len__(self):
         return len(self.ds.time)*len(self.ds.run)
@@ -303,8 +416,8 @@ class ModelRunsDataset(torch.utils.data.Dataset):
 
 class SplitModelRunsDataset(ModelRunsDataset):
     
-    def __init__(self, ds, allowed_indices):
-        super().__init__(ds)
+    def __init__(self, ds, allowed_indices, use_land_mask=False):
+        super().__init__(ds, use_land_mask)
         self.allowed_indices = allowed_indices
         
     def __len__(self):
@@ -321,8 +434,8 @@ def train_test_split(dataset: ModelRunsDataset, test_size: float,
     train_indices, test_indices = _array_train_test_split(indices, test_size=test_size, 
                                                    shuffle=True, 
                                                    random_state=random_state)
-    train_dataset = SplitModelRunsDataset(dataset.ds, train_indices)
-    test_dataset = SplitModelRunsDataset(dataset.ds, test_indices)
+    train_dataset = SplitModelRunsDataset(dataset.ds, train_indices, dataset.use_land_mask)
+    test_dataset = SplitModelRunsDataset(dataset.ds, test_indices, dataset.use_land_mask)
     return train_dataset, test_dataset
 
 
@@ -348,6 +461,7 @@ def get_dataset(zarr_path, level_vars=None, filter_bounds=True, split_at=360, bb
         ds = reduce_height(ds, level_vars)
     return ds
 
+
 def get_all_data_loaders(conf):
 
     # Parameters
@@ -356,6 +470,16 @@ def get_all_data_loaders(conf):
     
     ds_a = get_dataset(conf['data_zarr_a'], conf['level_vars'], filter_bounds=False, split_at=conf['split_at'], bbox=conf['bbox'])
     ds_b = get_dataset(conf['data_zarr_b'], conf['level_vars'], filter_bounds=False, split_at=conf['split_at'], bbox=conf['bbox'])
+    
+    if conf['time_range'] is not None:
+        if conf['time_range'] == 'overlap':
+            ds_a, ds_b = dataset_time_overlap([ds_a, ds_b])
+        elif isinstance(conf['time_range'], dict):
+            time_slice = slice(conf['time_range']['start_date'], conf['time_range']['end_date'])
+            ds_a = ds_a.sel(time=time_slice)
+            ds_b = ds_b.sel(time=time_slice)
+        else:
+            raise ValueError("time_range not valid : {}".format(conf['time_range']))
     
     if conf['preprocess_method']=='zeromean':
         trans = ZeroMeaniser(conf)
@@ -381,8 +505,8 @@ def get_all_data_loaders(conf):
     ds_a = trans.transform_a(ds_a)
     ds_b = trans.transform_b(ds_b)
         
-    dataset_a_train, dataset_a_test = train_test_split(ModelRunsDataset(ds_a), conf['test_size'])
-    dataset_b_train, dataset_b_test = train_test_split(ModelRunsDataset(ds_b), conf['test_size'])
+    dataset_a_train, dataset_a_test = train_test_split(ModelRunsDataset(ds_a, conf['use_land_mask']), conf['test_size'])
+    dataset_b_train, dataset_b_test = train_test_split(ModelRunsDataset(ds_b, conf['use_land_mask']), conf['test_size'])
     
     loaders = [torch.utils.data.DataLoader(d, **params) for d in 
                   [dataset_a_train, dataset_a_test, 

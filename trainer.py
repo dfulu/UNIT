@@ -15,10 +15,18 @@ class UNIT_Trainer(nn.Module):
         super(UNIT_Trainer, self).__init__()
         lr = hyperparameters['lr']
         # Initiate the networks
-        self.gen_a = VAEGen(hyperparameters['input_dim_a'], hyperparameters['gen'])  # auto-encoder for domain a
-        self.gen_b = VAEGen(hyperparameters['input_dim_b'], hyperparameters['gen'])  # auto-encoder for domain b
-        self.dis_a = MsImageDis(hyperparameters['input_dim_a'], hyperparameters['dis'])  # discriminator for domain a
-        self.dis_b = MsImageDis(hyperparameters['input_dim_b'], hyperparameters['dis'])  # discriminator for domain b
+        self.gen_a = VAEGen(hyperparameters['input_dim_a'], 
+                            hyperparameters['land_mask_a'],  
+                            hyperparameters['gen'])  # auto-encoder for domain a
+        self.gen_b = VAEGen(hyperparameters['input_dim_b'], 
+                            hyperparameters['land_mask_b'],  
+                            hyperparameters['gen'])  # auto-encoder for domain b
+        self.dis_a = MsImageDis(hyperparameters['input_dim_a'], 
+                                hyperparameters['land_mask_a'], 
+                                hyperparameters['dis'])  # discriminator for domain a
+        self.dis_b = MsImageDis(hyperparameters['input_dim_b'], 
+                                hyperparameters['land_mask_a'], 
+                                hyperparameters['dis'])  # discriminator for domain b
         self.instancenorm = nn.InstanceNorm2d(512, affine=False)
 
         # Setup the optimizers
@@ -174,3 +182,4 @@ class UNIT_Trainer(nn.Module):
         torch.save({'a': self.gen_a.state_dict(), 'b': self.gen_b.state_dict()}, gen_name)
         torch.save({'a': self.dis_a.state_dict(), 'b': self.dis_b.state_dict()}, dis_name)
         torch.save({'gen': self.gen_opt.state_dict(), 'dis': self.dis_opt.state_dict()}, opt_name)
+

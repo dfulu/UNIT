@@ -19,7 +19,7 @@ from torch.nn.common_types import _size_4_t
 
 class MsImageDis(nn.Module):
     # Multi-scale discriminator architecture
-    def __init__(self, input_dim, params):
+    def __init__(self, input_dim, land_mask, params):
         super(MsImageDis, self).__init__()
         self.n_layer = params['n_layer']
         self.gan_type = params['gan_type']
@@ -29,6 +29,8 @@ class MsImageDis(nn.Module):
         self.num_scales = params['num_scales']
         self.pad_type = params['pad_type']
         self.input_dim = input_dim
+        self.use_land_mask = land_mask is not None
+        self.land_mask = nn.Parameter(land_mask, requires_grad=False)
         self.downsample = nn.AvgPool2d(3, stride=2, padding=[1, 1], count_include_pad=False)
         self.cnns = nn.ModuleList()
         for _ in range(self.num_scales):
@@ -37,7 +39,13 @@ class MsImageDis(nn.Module):
     def _make_net(self):
         dim = self.dim
         cnn_x = []
-        cnn_x += [Conv2dBlock(self.input_dim, dim, 4, 2, 1, norm='none', activation=self.activ, pad_type=self.pad_type)]
+        cnn_x += [
+            Conv2dBlock(
+                (self.input_dim+int(self.use_land_mask)), dim, 4, 2, 1, 
+                norm='none', 
+                activation=self.activ, 
+                pad_type=self.pad_type)
+        ]
         for i in range(self.n_layer - 1):
             cnn_x += [Conv2dBlock(dim, dim * 2, 4, 2, 1, norm=self.norm, activation=self.activ, pad_type=self.pad_type)]
             dim *= 2
@@ -47,6 +55,8 @@ class MsImageDis(nn.Module):
 
     def forward(self, x):
         outputs = []
+        if self.use_land_mask:
+            x = torch.cat([x, self.land_mask.clone().detach().repeat(x.shape[0],1,1,1)], dim=1)
         for model in self.cnns:
             outputs.append(model(x))
             x = self.downsample(x)
@@ -91,7 +101,7 @@ class MsImageDis(nn.Module):
 
 class VAEGen(nn.Module):
     # VAE architecture
-    def __init__(self, input_dim, params):
+    def __init__(self, input_dim, land_mask, params):
         super(VAEGen, self).__init__()
         dim = params['dim']
         n_downsample = params['n_downsample']
@@ -100,9 +110,11 @@ class VAEGen(nn.Module):
         pad_type = params['pad_type']
         output_activ = params['output_activ']
         upsample = params['upsample']
+        self.use_land_mask = land_mask is not None
+        self.land_mask = nn.Parameter(land_mask, requires_grad=False)
 
         # content encoder
-        self.enc = ContentEncoder(n_downsample, n_res, input_dim, dim, 'in', activ, pad_type=pad_type)
+        self.enc = ContentEncoder(n_downsample, n_res, input_dim+int(self.use_land_mask), dim, 'in', activ, pad_type=pad_type)
         self.dec = Decoder(n_downsample, n_res, self.enc.output_dim, input_dim, res_norm='in', 
                            activ=activ, pad_type=pad_type, output_activ=output_activ, upsample=upsample)
 
@@ -117,6 +129,8 @@ class VAEGen(nn.Module):
         return images_recon, hiddens
 
     def encode(self, images):
+        if self.use_land_mask:
+            images = torch.cat([images, self.land_mask.clone().detach().repeat(images.shape[0],1,1,1)], dim=1)
         hiddens = self.enc(images)
         noise = Variable(torch.randn(hiddens.size()).cuda(hiddens.data.get_device()))
         return hiddens, noise
@@ -129,24 +143,6 @@ class VAEGen(nn.Module):
 ##################################################################################
 # Encoder and Decoders
 ##################################################################################
-
-class StyleEncoder(nn.Module):
-    def __init__(self, n_downsample, input_dim, dim, style_dim, norm, activ, pad_type):
-        super(StyleEncoder, self).__init__()
-        self.model = []
-        self.model += [Conv2dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
-        for i in range(2):
-            self.model += [Conv2dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
-            dim *= 2
-        for i in range(n_downsample - 2):
-            self.model += [Conv2dBlock(dim, dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
-        self.model += [nn.AdaptiveAvgPool2d(1)] # global average pooling
-        self.model += [nn.Conv2d(dim, style_dim, 1, 1, 0)]
-        self.model = nn.Sequential(*self.model)
-        self.output_dim = dim
-
-    def forward(self, x):
-        return self.model(x)
 
 
 class ContentEncoder(nn.Module):
@@ -419,7 +415,9 @@ class MultiChannelActivation(nn.Module):
 def get_activation(activation):
         # initialize activation
     if activation == 'relu':
-        return nn.ReLU(inplace=True)
+        return nn.ReLU(inplace=False)
+    elif activation == '-relu':
+        return NegReLU()
     elif activation == 'lrelu':
         return nn.LeakyReLU(0.2, inplace=True)
     elif activation == 'prelu':
@@ -432,6 +430,14 @@ def get_activation(activation):
         return None
     else:
         assert 0, "Unsupported activation: {}".format(activation)
+        
+class NegReLU(nn.Module):
+    
+    def __init__(self, inplace: bool = False):
+        super(NegReLU, self).__init__()
+        
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return - F.relu(input)
         
         
 class LatLonPad(nn.Module):
