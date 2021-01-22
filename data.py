@@ -1,3 +1,7 @@
+"""
+Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
+"""
+
 from sklearn.model_selection import train_test_split as _array_train_test_split
 import xarray as xr
 import numpy as np
