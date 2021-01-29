@@ -1,0 +1,83 @@
+# Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
+
+# logger options
+image_save_iter: 2_000        # How often do you want to save output images during training
+image_display_iter: 500       # How often do you want to display output images during training
+display_size: 16              # How many images do you want to display each time
+snapshot_save_iter: 2_000     # How often do you want to save trained models
+log_iter: 100                 # How often do you want to log the training stats
+
+# optimization options
+max_iter: 1_000_000           # maximum number of training iterations
+batch_size: 1                 # batch size
+weight_decay: 0.0001          # weight decay
+beta1: 0.5                    # Adam parameter
+beta2: 0.999                  # Adam parameter
+init: kaiming                 # initialization [gaussian/kaiming/xavier/orthogonal]
+lr: 0.0001                    # initial learning rate
+lr_policy: step               # learning rate scheduler
+step_size: 100_000            # how often to decay learning rate
+gamma: 0.5                    # how much to decay learning rate
+gan_w: 16                     # weight of adversarial loss
+recon_x_w: 10                 # weight of image reconstruction loss
+recon_kl_w: 0.01              # weight of KL loss for reconstruction
+recon_x_cyc_w: 10             # weight of cycle consistency loss
+recon_kl_cyc_w: 0.01          # weight of KL loss for cycle consistency
+vgg_w: 0                      # weight of domain-invariant perceptual loss
+recon_loss_func: mae         # function to use for reconstruction loss [ssim, mae]
+
+# model options
+gen:
+  dim: 64                     # number of filters in the bottommost layer
+  mlp_dim: 256                # number of filters in MLP
+  style_dim: 8                # length of style code
+  activ: relu                 # activation function [relu/lrelu/prelu/selu/tanh]
+  n_downsample: 2             # number of downsampling layers in content encoder
+  n_res: 4                    # number of residual blocks in content encoder/decoder
+  pad_type: zero              # padding type [zero/reflect/lonwrap]
+  upsample: nearest              # upsampling method type [nearest, bilinear, conv]
+  output_activ:               # activation functions for decoder channels can be single option or list
+  - relu                      #    if list, the functions are applied in same order as level_vars specified below
+  - none
+  - -relu
+  - relu
+  - none
+dis:
+  dim: 64                     # number of filters in the bottommost layer
+  norm: none                  # normalization layer [none/bn/in/ln]
+  activ: lrelu                # activation function [relu/lrelu/prelu/selu/tanh]
+  n_layer: 4                  # number of layers in D
+  gan_type: nsgan             # GAN loss [lsgan/nsgan]
+  num_scales: 3               # number of scales
+  pad_type: zero              # padding type [zero/reflect/lonwrap]
+
+# data options
+num_workers: 5                # number of data loading threads
+data_zarr_a: /datadrive/era5/all_hist_zarr  # dataset folder location
+data_zarr_b: /datadrive/hadgem3/all_hist_zarr     # dataset folder location
+agg_data_a: /datadrive/era5/all_hist_hadgem3_v1_agg.nc # dataset of preprocessed aggregate stats 
+agg_data_b: /datadrive/hadgem3/all_hist_era5_v1_agg.nc    # dataset of preprocessed aggregate stats
+preprocess_method: custom_nofield       # method of preprocessing [zeromean, normalise, units, custom_allfield, custom_tasfield, custom_prfield]
+resolution_match: downscale   # upscale to finer resolution or downscale to coarser resolution when matching
+scale_method: conservative    # Method from [conservative, bilinear] https://xesmf.readthedocs.io/en/latest/notebooks/Compare_algorithms.html
+use_land_mask: true           # [true / false]
+split_at: 180                 # what degree does the map split at? Left and right of map are at this longitude
+bbox:                         # either dict of N, S, E, W or none. Must match with above
+  N: 75
+  S: 30
+  E: 40
+  W: -30
+time_range: overlap           # What time range of data is used. Must be [none / overlap / dict as below]
+#  start_date: 1970-01-01T12:00:00
+#  end_date: 2000-01-01T12:00:00
+test_size: 0.2                # fraction of data used for test
+level_vars:                   # which levels to take each variable at 
+  0:
+  - pr
+  2:
+  - tas
+  - tasmin
+  - tasmax
+  5500:
+  - z500
+tas_diff: true                # [true / false] If true the tas is subtracted from tasmin and tasmax in preprocessing
