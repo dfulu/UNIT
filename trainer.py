@@ -3,6 +3,7 @@ Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses
 """
 from climatetranslation.unit.networks import MsImageDis, VAEGen
 from climatetranslation.unit.utils import weights_init, get_model_list, get_scheduler
+from climatetranslation.unit import ssim
 from torch.autograd import Variable
 import torch
 import torch.nn as nn
@@ -34,9 +35,11 @@ class UNIT_Trainer(nn.Module):
         dis_params = list(self.dis_a.parameters()) + list(self.dis_b.parameters())
         gen_params = list(self.gen_a.parameters()) + list(self.gen_b.parameters())
         self.dis_opt = torch.optim.Adam([p for p in dis_params if p.requires_grad],
-                                        lr=lr, betas=(beta1, beta2), weight_decay=hyperparameters['weight_decay'])
+                                        lr=lr, betas=(beta1, beta2),
+                                        weight_decay=hyperparameters['weight_decay'])
         self.gen_opt = torch.optim.Adam([p for p in gen_params if p.requires_grad],
-                                        lr=lr, betas=(beta1, beta2), weight_decay=hyperparameters['weight_decay'])
+                                        lr=lr, betas=(beta1, beta2),
+                                        weight_decay=hyperparameters['weight_decay'])
         self.dis_scheduler = get_scheduler(self.dis_opt, hyperparameters)
         self.gen_scheduler = get_scheduler(self.gen_opt, hyperparameters)
 
@@ -44,10 +47,21 @@ class UNIT_Trainer(nn.Module):
         self.apply(weights_init(hyperparameters['init']))
         self.dis_a.apply(weights_init('gaussian'))
         self.dis_b.apply(weights_init('gaussian'))
-
+        self.recon_func = hyperparameters['recon_loss_func']
 
     def recon_criterion(self, input, target):
-        return torch.mean(torch.abs(input - target))
+        if self.recon_func=='mae':
+            loss = torch.mean(torch.abs(input - target))
+        elif self.recon_func=='ssim':
+            window = ssim.create_window(window_size=11, channel=input.shape[1]).to(target.device)
+            loss = - ssim._ssim(input, target, window, window_size=11, channel=input.shape[1])
+        else:
+            raise ValueError(
+                "unrecognised loss function {}".format(
+                    self.recon_loss_func
+                ))
+        return loss
+            
 
     def forward(self, x_a, x_b):
         self.eval()
@@ -141,7 +155,7 @@ class UNIT_Trainer(nn.Module):
         # D loss
         self.loss_dis_a = self.dis_a.calc_dis_loss(x_ba.detach(), x_a)
         self.loss_dis_b = self.dis_b.calc_dis_loss(x_ab.detach(), x_b)
-        self.loss_dis_total = hyperparameters['gan_w'] * self.loss_dis_a + hyperparameters['gan_w'] * self.loss_dis_b
+        self.loss_dis_total = hyperparameters['gan_w'] * (self.loss_dis_a + self.loss_dis_b)
         self.loss_dis_total.backward()
         self.dis_opt.step()
 

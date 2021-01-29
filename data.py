@@ -21,7 +21,7 @@ def reduce_height(ds, level_vars):
     ds_list = []
     if 'height' in ds.dims:
         for h, v in level_vars.items():
-            ds_list += [ds.sel(height=h)[[k for k in ds.keys() if np.any([vi in k for vi in v])]].drop('height')]
+            ds_list += [ds.sel(height=h)[[vi for vi in v]].drop('height')]
         if len(ds_list)>1:
             ds = reduce(lambda ds1, ds2: ds1.merge(ds2), ds_list)
         else:
@@ -111,6 +111,13 @@ def _quick_add_bounds(ds):
 def _quick_remove_bounds(ds):
     del ds['lat_b']
     del ds['lon_b']
+
+
+def even_lat_lon(ds):
+    return ds.isel(
+            lat=slice(0, len(ds.lat)//2 * 2),
+            lon=slice(0, len(ds.lon)//2 * 2)
+        )
 
 
 def construct_regridders(ds_a, ds_b, resolution_match='downscale', scale_method='bilinear', periodic=True):
@@ -381,24 +388,28 @@ class CustomTransformer(Normaliser):
             ds[k] += ds_agg[k].sel(aggregate_statistic='mean').drop('aggregate_statistic')
         return ds
 
+    
+def get_land_mask(ds):
+    lat = ds.lat.values.copy()
+    lon = ds.lon.values.copy()
+    lon[lon>180] = lon[lon>180]-360
+    lon[lon<=-180] = lon[lon<=-180]+360
+    lon_grid, lat_grid = np.meshgrid(lon,lat)
+    land_mask = torch.from_numpy(
+        globe.is_land(lat_grid, lon_grid)
+            .astype(np.float32)).unsqueeze(0)
+    return land_mask
+
 
 class ModelRunsDataset(torch.utils.data.Dataset):
     def __init__(self, ds, use_land_mask=False):
         # Ensure even valued image sides
-        self.ds = ds.isel(
-            lat=slice(0, len(ds.lat)//2 * 2),
-            lon=slice(0, len(ds.lon)//2 * 2)
-        )
-        self.land_mask = None
+        self.ds = even_lat_lon(ds)
         self.use_land_mask = use_land_mask
         if use_land_mask:
-            lat = self.ds.lat.values.copy()
-            lon = self.ds.lon.values.copy()
-            lon[lon>180] = lon[lon>180]-360
-            lon[lon<=-180] = lon[lon<=-180]+360
-
-            lon_grid, lat_grid = np.meshgrid(lon,lat)
-            self.land_mask = torch.from_numpy(globe.is_land(lat_grid, lon_grid).astype(np.float32)).unsqueeze(0)
+            self.land_mask = get_land_mask(ds)
+        else:
+            self.land_mask = None
 
     def __len__(self):
         return len(self.ds.time)*len(self.ds.run)

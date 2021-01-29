@@ -6,11 +6,15 @@ import xarray as xr
 import numpy as np
 
 from climatetranslation.unit.utils import get_config
-from climatetranslation.unit.data import (get_dataset, 
-                  CustomTransformer, 
-                  UnitModifier, 
-                  ZeroMeaniser, 
-                  Normaliser
+from climatetranslation.unit.data import (
+    get_dataset, 
+    CustomTransformer, 
+    UnitModifier, 
+    ZeroMeaniser, 
+    Normaliser,
+    dataset_time_overlap,
+    get_land_mask,
+    even_lat_lon,
 )
 from climatetranslation.unit.trainer import UNIT_Trainer
 
@@ -37,8 +41,7 @@ def network_translate_constructor(config, checkpoint, x2x):
         x = x.cpu().detach().numpy()
         return x[0]
     return network_translate
-        
-            
+
 
 if __name__=='__main__':
     
@@ -52,7 +55,7 @@ if __name__=='__main__':
         return x2x
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='~/model_outputs/outputs/hadgem3_to_cam5_nat-hist/config.yaml', help='Path to the config file.')
+    parser.add_argument('--config', type=str, help='Path to the config file.')
     parser.add_argument('--output_zarr', type=str, help="output zarr store path")
     parser.add_argument('--checkpoint', type=str, help="checkpoint of autoencoders")
     parser.add_argument('--x2x', type=check_x2x, help="any of [a2a, a2b, b2a, b2b]")
@@ -64,38 +67,55 @@ if __name__=='__main__':
     torch.cuda.manual_seed(args.seed)
 
     # Load experiment setting
-    config = get_config(args.config)
+    conf = get_config(args.config)
     
     # load the datasets
-    ds_a = get_dataset(config['data_zarr_a'], config['level_vars'])
-    ds_b = get_dataset(config['data_zarr_b'], config['level_vars'])
+    ds_a = get_dataset(conf['data_zarr_a'], conf['level_vars'], 
+                       filter_bounds=False, split_at=conf['split_at'], 
+                       bbox=conf['bbox'])
+    ds_b = get_dataset(conf['data_zarr_b'], conf['level_vars'], 
+                       filter_bounds=False, split_at=conf['split_at'], 
+                       bbox=conf['bbox'])
+    
+    if conf['time_range'] is not None:
+        if conf['time_range'] == 'overlap':
+            ds_a, ds_b = dataset_time_overlap([ds_a, ds_b])
+        elif isinstance(conf['time_range'], dict):
+            time_slice = slice(conf['time_range']['start_date'], conf['time_range']['end_date'])
+            ds_a = ds_a.sel(time=time_slice)
+            ds_b = ds_b.sel(time=time_slice)
+        else:
+            raise ValueError("time_range not valid : {}".format(conf['time_range']))
     
     # load pre/post processing transformer
-    if config['preprocess_method']=='zeromean':
-        prepost_trans = ZeroMeaniser(config, downscale_consolidate=True)
-    elif config['preprocess_method']=='normalise':
-        prepost_trans = Normaliser(config, downscale_consolidate=True)
-    elif config['preprocess_method']=='units':
-        prepost_trans = UnitModifier(config, downscale_consolidate=True)
-    elif config['preprocess_method']=='custom_allfield':
-        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=True, pr_field_norm=True)
-    elif config['preprocess_method']=='custom_tasfield':
-        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=True, pr_field_norm=False)
-    elif config['preprocess_method']=='custom_prfield':
-        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=False, pr_field_norm=True)
-    elif config['preprocess_method']=='custom_nofield':
-        prepost_trans = CustomTransformer(config, downscale_consolidate=True, tas_field_norm=False, pr_field_norm=False)
+    if conf['preprocess_method']=='zeromean':
+        prepost_trans = ZeroMeaniser(conf)
+    elif conf['preprocess_method']=='normalise':
+        prepost_trans = Normaliser(conf)
+    elif conf['preprocess_method']=='units':
+        prepost_trans = UnitModifier(conf)
+    elif conf['preprocess_method']=='custom_allfield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=True, pr_field_norm=True)
+    elif conf['preprocess_method']=='custom_tasfield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=True, pr_field_norm=False)
+    elif conf['preprocess_method']=='custom_prfield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=False, pr_field_norm=True)
+    elif conf['preprocess_method']=='custom_nofield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=False, pr_field_norm=False)
     else:
         raise ValueError(f"Unrecognised preprocess_method : {conf['preprocess_method']}")
     prepost_trans.fit(ds_a, ds_b)
     
-    pre_trans = prepost_trans.transform_a if args.x2x[0]=='a' else prepost_trans.transform_b
+    ds_a = even_lat_lon(prepost_trans.transform_a(ds_a))
+    ds_b = even_lat_lon(prepost_trans.transform_b(ds_b))
     post_trans = prepost_trans.inverse_a if args.x2x[-1]=='a' else prepost_trans.inverse_b
 
     # load model 
-    config['input_dim_a'] = len(ds_a.keys())
-    config['input_dim_b'] = len(ds_b.keys())
-    net_trans = network_translate_constructor(config, args.checkpoint, args.x2x)
+    conf['input_dim_a'] = len(ds_a.keys())
+    conf['input_dim_b'] = len(ds_b.keys())
+    conf['land_mask_a'] = get_land_mask(ds_a)
+    conf['land_mask_b'] = get_land_mask(ds_b)
+    net_trans = network_translate_constructor(conf, args.checkpoint, args.x2x)
     
     ds = ds_a if args.x2x[0]=='a' else ds_b
     
@@ -111,7 +131,7 @@ if __name__=='__main__':
             
             # pre-rocess and convert to array
             da = (
-                pre_trans(ds.isel(time=slice(i, min(i+n_times, N_times))))
+                ds.isel(time=slice(i, min(i+n_times, N_times)))
                 .to_array()
                 .transpose('run', 'time', 'variable', 'lat', 'lon')
             )
