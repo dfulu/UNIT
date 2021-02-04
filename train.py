@@ -72,14 +72,18 @@ def all_nan_last_two_axis_any_channel(x):
     #return torch.any(torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1), axis=-1)
     return torch.isnan(x).all(dim=-1).all(dim=-1).any()
 
+def any_nan(x):
+    #return torch.any(torch.all(torch.all(torch.isnan(x), axis=-1), axis=-1), axis=-1)
+    return torch.isnan(x).any()
+
 # Start training
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
 
 while True:
     for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
         # Skip NaN fields
-        if all_nan_last_two_axis_any_channel(images_a) or all_nan_last_two_axis_any_channel(images_b):
-            print('Skipped on it = {}'.format(it))
+        if any_nan(images_a) or any_nan(images_b):
+            print('NaN detected. Skipping iteration = {}'.format(it))
             continue
 
         trainer.update_learning_rate()

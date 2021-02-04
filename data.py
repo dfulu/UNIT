@@ -469,6 +469,7 @@ def get_dataset(zarr_path, level_vars=None, filter_bounds=True, split_at=360, bb
     ds = split_lon_at(ds, split_at)
     
     if bbox is not None:
+        print(bbox)
         ds = ds.sel(lat=slice(bbox['S'], bbox['N']), lon=slice(bbox['W'], bbox['E']))
     if filter_bounds:
         ds = ds[[v for v in ds.data_vars if not 'bnds' in v]]

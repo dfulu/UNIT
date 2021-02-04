@@ -43,6 +43,27 @@ def network_translate_constructor(config, checkpoint, x2x):
     return network_translate
 
 
+def get_data_transformer(conf):
+    # load pre/post processing transformer
+    if conf['preprocess_method']=='zeromean':
+        prepost_trans = ZeroMeaniser(conf)
+    elif conf['preprocess_method']=='normalise':
+        prepost_trans = Normaliser(conf)
+    elif conf['preprocess_method']=='units':
+        prepost_trans = UnitModifier(conf)
+    elif conf['preprocess_method']=='custom_allfield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=True, pr_field_norm=True)
+    elif conf['preprocess_method']=='custom_tasfield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=True, pr_field_norm=False)
+    elif conf['preprocess_method']=='custom_prfield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=False, pr_field_norm=True)
+    elif conf['preprocess_method']=='custom_nofield':
+        prepost_trans = CustomTransformer(conf, tas_field_norm=False, pr_field_norm=False)
+    else:
+        raise ValueError(f"Unrecognised preprocess_method : {conf['preprocess_method']}")
+    return prepost_trans
+
+
 if __name__=='__main__':
     
     import argparse
@@ -87,23 +108,7 @@ if __name__=='__main__':
         else:
             raise ValueError("time_range not valid : {}".format(conf['time_range']))
     
-    # load pre/post processing transformer
-    if conf['preprocess_method']=='zeromean':
-        prepost_trans = ZeroMeaniser(conf)
-    elif conf['preprocess_method']=='normalise':
-        prepost_trans = Normaliser(conf)
-    elif conf['preprocess_method']=='units':
-        prepost_trans = UnitModifier(conf)
-    elif conf['preprocess_method']=='custom_allfield':
-        prepost_trans = CustomTransformer(conf, tas_field_norm=True, pr_field_norm=True)
-    elif conf['preprocess_method']=='custom_tasfield':
-        prepost_trans = CustomTransformer(conf, tas_field_norm=True, pr_field_norm=False)
-    elif conf['preprocess_method']=='custom_prfield':
-        prepost_trans = CustomTransformer(conf, tas_field_norm=False, pr_field_norm=True)
-    elif conf['preprocess_method']=='custom_nofield':
-        prepost_trans = CustomTransformer(conf, tas_field_norm=False, pr_field_norm=False)
-    else:
-        raise ValueError(f"Unrecognised preprocess_method : {conf['preprocess_method']}")
+    prepost_trans = get_data_transformer(conf)
     prepost_trans.fit(ds_a, ds_b)
     
     ds_a = even_lat_lon(prepost_trans.transform_a(ds_a))
